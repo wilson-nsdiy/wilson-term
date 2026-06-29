@@ -179,8 +179,8 @@ if (process.contextIsolated) {
   contextBridge.exposeInMainWorld('electron', electronAPI)
   contextBridge.exposeInMainWorld('api', api)
 } else {
-  // @ts-ignore fallback for contextIsolation disabled
+  // @ts-expect-error fallback for contextIsolation disabled
   window.electron = electronAPI
-  // @ts-ignore
+  // @ts-expect-error fallback for contextIsolation disabled
   window.api = api
 }

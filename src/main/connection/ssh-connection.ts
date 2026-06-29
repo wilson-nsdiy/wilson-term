@@ -249,7 +249,7 @@ export class SSHConnection extends BaseConnection {
             connectConfig.privateKey = await readFile(resolvedPath)
             if (config.passphrase) connectConfig.passphrase = config.passphrase
           } catch (err) {
-            throw new Error(`读取密钥文件失败: ${(err as Error).message}`)
+            throw new Error(`读取密钥文件失败: ${(err as Error).message}`, { cause: err })
           }
         }
         break
