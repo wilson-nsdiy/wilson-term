@@ -1073,4 +1073,3 @@ npm run build
 ### 如何处理多个终端会话？
 
 每个终端会话有唯一的 `sessionId`。插件应按 `sessionId` 维护独立状态（如 plugin-demo 插件为每个会话维护独立的检测器实例）。通过 `onSessionCreated` / `onSessionDestroyed` 管理会话生命周期。
-

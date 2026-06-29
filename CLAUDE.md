@@ -181,4 +181,3 @@ npm run package    # 打包应用
 - 插件运行需相应权限和网络环境
 - 自动更新功能需网络路径可达
 - 原生模块（serialport、ssh2）通过 asarUnpack 排除在 asar 包外
-

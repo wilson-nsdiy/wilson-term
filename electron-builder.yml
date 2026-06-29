@@ -25,4 +25,3 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
 afterPack: build/afterPack.js
-
