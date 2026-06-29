@@ -1,0 +1,27 @@
+appId: com.wilson.terminal
+productName: Wilson-Term
+directories:
+  buildResources: resources
+  output: release
+files:
+  - dist/**/*
+  - CHANGELOG.json
+asarUnpack:
+  - node_modules/serialport/**/*
+  - node_modules/@serialport/**/*
+  - node_modules/ssh2/**/*
+  - node_modules/koffi/**/*
+  - node_modules/node-pty/**/*
+  - "**/*.node"
+extraResources:
+  - from: resources/icon-256.png
+    to: icon.png
+win:
+  target:
+    - nsis
+  icon: resources/icon.ico
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+afterPack: build/afterPack.js
