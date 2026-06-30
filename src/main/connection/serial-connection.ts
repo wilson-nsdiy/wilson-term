@@ -1,5 +1,5 @@
 import { SerialPort } from 'serialport'
-import type { SerialConfig, LogConfig } from '@shared/types'
+import type { SerialConfig } from '@shared/types'
 import type { ConnectionOptions } from './types'
 import { BaseConnection } from './base-connection'
 import { decodeBufferForTerminal } from './c1-convert'

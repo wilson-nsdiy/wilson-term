@@ -53,10 +53,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Set up MSVC dev command (Windows)
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-
       - name: Build
         run: npm run build
 

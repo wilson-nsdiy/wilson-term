@@ -1,11 +1,11 @@
 import { Client } from 'ssh2'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, readdirSync, readFile } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, readFile } from 'fs'
 import { join } from 'path'
 import { homedir, hostname } from 'os'
 import { createHash } from 'crypto'
 import { execSync } from 'child_process'
 import { app } from 'electron'
-import type { SSHConfig, LogConfig, HostKeyVerifyRequest, KeyPairResult, PasswordRequest } from '@shared/types'
+import type { SSHConfig, HostKeyVerifyRequest, KeyPairResult, PasswordRequest } from '@shared/types'
 import type { ConnectionOptions } from './types'
 import { BaseConnection } from './base-connection'
 import { decodeBufferForTerminal } from './c1-convert'
@@ -270,6 +270,7 @@ export class SSHConnection extends BaseConnection {
     // 未填写密码时，用 authHandler 控制认证流程：
     // 有 agent/密钥 → 先尝试免密，失败后若服务端支持 password 则弹窗输入
     // 无 agent/密钥 → 直接弹窗请求密码
+    type AuthCallback = Parameters<NonNullable<import('ssh2').ConnectConfig['authHandler']>>[2]
     if (needPasswordFallback) {
       connectConfig.authHandler = (methodsLeft, _partialSuccess, callback) => {
         if (methodsLeft === null) {
@@ -292,7 +293,7 @@ export class SSHConnection extends BaseConnection {
         }
       }
 
-      const requestPassword = (callback: (auth: any) => void, retry: boolean) => {
+      const requestPassword = (callback: AuthCallback, retry: boolean) => {
         const request: PasswordRequest = {
           sessionId: this.sessionId,
           host: config.host,
