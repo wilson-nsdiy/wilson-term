@@ -135,7 +135,7 @@ const api = {
   // 应用更新
   app: {
     getVersion: () => ipcRenderer.invoke('app:get-version'),
-    checkUpdate: () => ipcRenderer.invoke('app:check-update'),
+    checkUpdate: (manual?: boolean) => ipcRenderer.invoke('app:check-update', manual),
     getChangelog: () => ipcRenderer.invoke('app:get-changelog'),
     getIgnoredVersions: () => ipcRenderer.invoke('app:get-ignored-versions'),
     saveIgnoredVersions: (versions: string[]) => ipcRenderer.invoke('app:save-ignored-versions', versions),

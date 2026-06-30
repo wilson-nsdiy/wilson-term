@@ -4,7 +4,7 @@ import { readFileSync } from 'fs'
 import { networkInterfaces } from 'os'
 import { registerConnectionHandlers, registerSSHSpecificHandlers, registerSerialSpecificHandlers, registerBashSpecificHandlers, getActiveClientsMap, connectionManager } from './connection/ipc'
 import { registerSFTPHandlers, setActiveConnectionsGetter } from './sftp'
-import { loadSavedSessionsFromDisk, saveSavedSessionsToDisk, loadIgnoredVersionsFromDisk, saveIgnoredVersionsFromDisk, loadCommandButtonGroupsFromDisk, saveCommandButtonGroupsToDisk, loadAppSettingsFromDisk, saveAppSettingsToDisk, loadViewStateFromDisk, saveViewStateToDisk, loadScheduledTasksFromDisk, saveScheduledTasksToDisk, loadProfilesFromDisk, saveProfilesToDisk } from './storage'
+import { loadSavedSessionsFromDisk, saveSavedSessionsToDisk, loadIgnoredVersionsFromDisk, saveIgnoredVersionsFromDisk, loadLastUpdateCheckTime, saveLastUpdateCheckTime, loadCommandButtonGroupsFromDisk, saveCommandButtonGroupsToDisk, loadAppSettingsFromDisk, saveAppSettingsToDisk, loadViewStateFromDisk, saveViewStateToDisk, loadScheduledTasksFromDisk, saveScheduledTasksToDisk, loadProfilesFromDisk, saveProfilesToDisk } from './storage'
 import { logManager } from './logger'
 import { appLogger } from './app-logger'
 import { checkForUpdate, getAppVersion, getChangelog } from './updater'
@@ -172,8 +172,23 @@ export function registerIpcHandlers(): void {
     return getAppVersion()
   })
 
-  // 检查更新
-  ipcMain.handle('app:check-update', async () => {
+  // 检查更新（自动检查每天最多请求一次，手动检查始终执行）
+  ipcMain.handle('app:check-update', async (_event, manual?: boolean) => {
+    const lastCheckTime = loadLastUpdateCheckTime()
+    const now = Date.now()
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000
+
+    // 如果是自动检查且距离上次检查不到 24 小时，跳过请求
+    if (!manual && now - lastCheckTime < ONE_DAY_MS) {
+      return {
+        hasUpdate: false,
+        currentVersion: getAppVersion(),
+        skipped: true
+      }
+    }
+
+    // 更新检查时间戳
+    saveLastUpdateCheckTime(now)
     return checkForUpdate()
   })
 
