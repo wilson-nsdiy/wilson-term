@@ -107,6 +107,40 @@ jobs:
           prerelease: false
           make_latest: true
           generate_release_notes: true
+          body: |
+            ## Wilson Term ${{ github.ref_name }}
+
+            Wilson Term 是一个支持 SSH / Telnet / 串口 / 本地终端连接的模拟终端。
+
+            ### 功能特性
+
+            - **多协议连接** — SSH（密码/密钥/免密认证）、Telnet（IAC 协商）、串口通信、本地终端（CMD/PowerShell/WSL）
+            - **多标签页** — 同时管理多个终端会话，标签页显示连接类型图标和状态指示灯
+            - **会话管理** — 侧边栏保存连接模板，双击快速连接
+            - **SFTP 文件管理** — 基于 SSH 通道的远程文件浏览、上传、下载
+            - **终端搜索** — 正则/纯文本搜索，大小写选项
+            - **按钮栏** — 自定义命令按钮分组，支持多命令批量发送
+            - **定时任务** — 按会话配置定时执行命令
+            - **配置档案** — Profile 管理器，按连接类型应用全局配置覆盖
+            - **日志记录** — 仅记录输出数据，ANSI 剥离、时间戳前缀、按大小/时间分割
+            - **插件系统** — 主进程/渲染进程双进程插件，ZIP 导入导出
+            - **多行粘贴确认** — 检测多行粘贴内容，弹窗确认或自动发送
+            - **键盘锁指示** — 实时显示 CapsLock/NumLock/ScrollLock 状态
+            - **自动更新** — 检查版本更新，支持忽略版本
+            - **Catppuccin Mocha** — 暗色主题，无边框窗口，自定义标题栏和菜单栏
+
+            ### 下载安装
+
+            | 平台 | 文件 | 说明 |
+            |------|------|------|
+            | Windows | `Wilson-Term-${{ github.ref_name }}-win-x64.exe` | NSIS 安装程序，支持自定义安装目录 |
+            | Linux (AppImage) | `Wilson-Term-${{ github.ref_name }}-linux-x64.AppImage` | 通用 Linux 二进制，`chmod +x` 后运行 |
+            | Linux (deb) | `Wilson-Term-${{ github.ref_name }}-linux-x64.deb` | Debian/Ubuntu 包，`sudo dpkg -i` 安装 |
+
+            ### 系统要求
+
+            - Windows 10+ / Linux（Ubuntu 20.04+ / Debian 11+）
+            - 串口功能需要硬件权限（Linux 需加入 `dialout` 组）
           files: |
             release-artifacts/**/*.exe
             release-artifacts/**/*.AppImage
