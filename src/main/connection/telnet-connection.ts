@@ -1,5 +1,5 @@
 import { createConnection, Socket } from 'net'
-import type { TelnetConfig, LogConfig } from '@shared/types'
+import type { TelnetConfig } from '@shared/types'
 import type { ConnectionOptions } from './types'
 import { BaseConnection } from './base-connection'
 import { TelnetProtocol } from './telnet-protocol'
@@ -19,7 +19,6 @@ export class TelnetConnection extends BaseConnection {
   async connect(): Promise<void> {
     const config = this.options.config as TelnetConfig
     const logConfig = this.options.logConfig
-    const sender = this.options.sender
     const timeout = config.timeout || 15000
 
     return new Promise<void>((resolve, reject) => {

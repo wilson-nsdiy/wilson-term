@@ -153,9 +153,9 @@ export class ProtocolParser {
   }
 
   off<K extends keyof ProtocolEvents>(event: K, callback: EventCallback<ProtocolEvents[K]>): void {
-    const list = this.callbacks[event]
+    const list = this.callbacks[event] as EventCallback<ProtocolEvents[K]>[] | undefined
     if (list) {
-      const idx = list.indexOf(callback as any)
+      const idx = list.indexOf(callback)
       if (idx >= 0) list.splice(idx, 1)
     }
   }
@@ -167,10 +167,10 @@ export class ProtocolParser {
   }
 
   private emit<K extends keyof ProtocolEvents>(event: K, value: ProtocolEvents[K]): void {
-    const list = this.callbacks[event]
+    const list = this.callbacks[event] as EventCallback<ProtocolEvents[K]>[] | undefined
     if (list) {
       for (const cb of list) {
-        (cb as EventCallback<any>)(value)
+        cb(value)
       }
     }
   }
