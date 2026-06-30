@@ -72,6 +72,31 @@ export function saveIgnoredVersionsToDisk(versions: string[]): void {
   writeFileSync(filePath, JSON.stringify(versions), 'utf-8')
 }
 
+/** 读取上次检查更新的时间戳 */
+export function loadLastUpdateCheckTime(): number {
+  const filePath = getStoragePath('update-check-time.json')
+  if (!existsSync(filePath)) {
+    return 0
+  }
+  try {
+    const data = readFileSync(filePath, 'utf-8')
+    const parsed = JSON.parse(data) as { timestamp: number }
+    return parsed.timestamp || 0
+  } catch {
+    return 0
+  }
+}
+
+/** 保存上次检查更新的时间戳 */
+export function saveLastUpdateCheckTime(timestamp: number): void {
+  const filePath = getStoragePath('update-check-time.json')
+  const dir = dirname(filePath)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  writeFileSync(filePath, JSON.stringify({ timestamp }), 'utf-8')
+}
+
 /** 从磁盘加载命令按钮分组（兼容旧版 command 字段） */
 export function loadCommandButtonGroupsFromDisk(): CommandButtonGroup[] {
   const filePath = getStoragePath('command-button-groups.json')

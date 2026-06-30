@@ -69,8 +69,11 @@ const App: React.FC = () => {
         if (res.hasUpdate) {
           setHasNewVersion(true)
         }
+        // 只有在有更新且未被跳过时才打开自动检查弹窗
+        if (res.hasUpdate && !res.skipped) {
+          setAutoCheckOpen(true)
+        }
       })
-      setAutoCheckOpen(true)
     }
     loadSavedSessions()
     init()
