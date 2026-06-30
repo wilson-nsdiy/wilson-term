@@ -37,7 +37,7 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
-          - os: windows-latest
+          - os: windows-2022
             platform: win
     runs-on: ${{ matrix.os }}
     steps:
@@ -49,6 +49,12 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
+
+      - name: Setup MSVC (Windows)
+        if: matrix.platform == 'win'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          vsversion: 2022
 
       - name: Install dependencies
         run: npm ci
