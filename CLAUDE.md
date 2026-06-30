@@ -2,6 +2,11 @@
 
 Wilson Term 是一个支持 SSH / Telnet / 串口 / 本地终端连接的模拟终端，Wilson 的个人项目。
 
+## 仓库地址
+
+- GitHub: https://github.com/wilson-nsdiy/wilson-term
+- Gitee: https://gitee.com/zhouws-chn/wilson-term
+
 ## 核心功能
 
 - **SSH 连接**：支持密码认证、密钥认证、免密认证（ssh-agent + 默认密钥文件），主机密钥验证（known_hosts 管理），SSH 密钥对生成
