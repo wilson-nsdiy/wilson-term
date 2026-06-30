@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.0)'
+        required: true
 
 permissions:
   contents: write
@@ -59,10 +64,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
-
-      - name: Package
+      - name: Build & Package
         run: npm run package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -71,40 +73,43 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.platform }}
-          path: release/*
+          path: |
+            release/*.exe
+            release/*.AppImage
+            release/*.blockmap
+            release/*.yml
+            !release/builder-debug.yml
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
-  release:
+  publish:
     needs: build
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.inputs.tag || github.ref }}
 
+    steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          merge-multiple: true
+          path: release-artifacts
+          pattern: release-*
 
-      - name: Get tag message
-        id: tag_message
-        run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          TAG_MESSAGE=$(git tag -l --format='%(contents:body)' "$TAG_NAME")
+      - name: List all downloaded artifacts
+        run: find release-artifacts/ -type f -exec ls -lh {} \;
 
-          echo "message<<EOF" >> $GITHUB_OUTPUT
-          echo "$TAG_MESSAGE" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+      - name: Remove builder-debug files
+        run: find release-artifacts/ -name "builder-debug.yml" -delete -print || true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          draft: false
+          prerelease: false
+          make_latest: true
           generate_release_notes: true
-          body: ${{ steps.tag_message.outputs.message }}
-          files: artifacts/*
+          files: |
+            release-artifacts/**/*.exe
+            release-artifacts/**/*.AppImage
+            release-artifacts/**/*.blockmap
+            release-artifacts/**/*.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
