@@ -343,6 +343,8 @@ export interface UpdateCheckResult {
   releaseNotes?: string
   author?: string
   error?: string
+  /** 跳过本次检查（距上次检查不到 24 小时） */
+  skipped?: boolean
   /** 所有新版本的更新信息列表 */
   versions?: VersionEntry[]
 }
@@ -379,7 +381,7 @@ export interface ScheduledTask {
 /** 应用 API */
 export interface AppAPI {
   getVersion: () => Promise<string>
-  checkUpdate: () => Promise<UpdateCheckResult>
+  checkUpdate: (manual?: boolean) => Promise<UpdateCheckResult>
   getChangelog: () => Promise<ChangelogEntry[]>
   getIgnoredVersions: () => Promise<string[]>
   saveIgnoredVersions: (versions: string[]) => Promise<void>

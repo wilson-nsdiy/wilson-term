@@ -430,6 +430,7 @@ export class SSHConnection extends BaseConnection {
           stream.on('close', () => {
             this.flushRemaining()
             this.channel = null
+            this.client?.end()
           })
 
           this.fulfilled = true

@@ -94,7 +94,12 @@ const UpdateDialog: React.FC<UpdateDialogProps> = ({ open, onClose, autoCheck })
   const handleCheck = useCallback(async (manual = false) => {
     setChecking(true)
     try {
-      const res = await window.api.app.checkUpdate()
+      const res = await window.api.app.checkUpdate(manual)
+      // 如果被跳过（距上次检查不到 24 小时），不显示任何内容
+      if (res.skipped) {
+        setChecking(false)
+        return
+      }
       if (manual) {
         // 手动模式：始终显示结果，同步更新 NEW 标记状态
         setResultPopup(res)
