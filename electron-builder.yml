@@ -24,4 +24,8 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+linux:
+  target:
+    - AppImage
+  icon: resources/icon-256.png
 afterPack: build/afterPack.js
