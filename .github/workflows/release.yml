@@ -76,6 +76,7 @@ jobs:
           path: |
             release/*.exe
             release/*.AppImage
+            release/*.deb
             release/*.blockmap
             release/*.yml
             !release/builder-debug.yml
@@ -109,6 +110,7 @@ jobs:
           files: |
             release-artifacts/**/*.exe
             release-artifacts/**/*.AppImage
+            release-artifacts/**/*.deb
             release-artifacts/**/*.blockmap
             release-artifacts/**/*.yml
         env:
