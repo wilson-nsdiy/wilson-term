@@ -70,7 +70,7 @@ export class ConnectionManager {
       case 'bash':
         return new BashConnection(options)
       default:
-        throw new Error(`不支持的连接类型: ${(options.config as any).type}`)
+        throw new Error(`不支持的连接类型: ${(options.config as { type: string }).type}`)
     }
   }
 
