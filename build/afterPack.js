@@ -29,7 +29,6 @@ module.exports = async function (context) {
   // 2. 删除不必要的 Chromium/Electron 二进制
   // vk_swiftshader.dll + icd: Vulkan 软件渲染，用默认 Angle/D3D 即可
   remove(path.join(appOutDir, 'vk_swiftshader.dll'))
-  remove(path.join(appOutDir, 'vk_swiftshader.dll'))
   remove(path.join(appOutDir, 'vk_swiftshader_icd.json'))
   remove(path.join(appOutDir, 'vulkan-1.dll'))
   remove(path.join(appOutDir, 'LICENSES.chromium.html'))
