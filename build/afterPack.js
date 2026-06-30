@@ -32,4 +32,11 @@ module.exports = async function (context) {
   remove(path.join(appOutDir, 'vk_swiftshader_icd.json'))
   remove(path.join(appOutDir, 'vulkan-1.dll'))
   remove(path.join(appOutDir, 'LICENSES.chromium.html'))
+
+  // 3. 删除原生模块的 build/Release 目录，确保运行时 fallback 到 prebuilds/（NAPI）
+  //    npmRebuild: false 跳过了 @electron/rebuild，但 npm ci 阶段可能残留编译产物
+  const unpackedModules = path.join(appOutDir, 'resources', 'app.asar.unpacked', 'node_modules')
+  for (const mod of ['node-pty', '@serialport/bindings-cpp', 'serialport/@serialport/bindings-cpp']) {
+    remove(path.join(unpackedModules, mod, 'build', 'Release'))
+  }
 }

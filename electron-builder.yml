@@ -1,5 +1,6 @@
 appId: com.wilson.terminal
 productName: Wilson-Term
+npmRebuild: false
 directories:
   buildResources: resources
   output: release
