@@ -340,7 +340,6 @@ export class SSHConnection extends BaseConnection {
       this.client = client
 
       const cleanup = (): void => {
-        if (this.fulfilled) return
         logManager.closeLogger(this.sessionId)
         this.channel = null
         this.client = null
