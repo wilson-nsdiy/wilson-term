@@ -41,6 +41,7 @@ coverage/
 # Temporary files
 *.tmp
 *.bak
+*.patch
 
 # Plugins
 plugins/*/dist/
