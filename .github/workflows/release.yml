@@ -61,6 +61,20 @@ jobs:
         with:
           vsversion: 2022
 
+      - name: Set version from tag
+        run: |
+          node -e "
+            const fs = require('fs');
+            const tag = process.env.TAG;
+            const version = tag.replace(/^v/, '');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = version;
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            console.log('Version set to ' + version);
+          "
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
       - name: Install dependencies
         run: npm ci
 
@@ -100,12 +114,22 @@ jobs:
       - name: Remove builder-debug files
         run: find release-artifacts/ -name "builder-debug.yml" -delete -print || true
 
+      - name: Determine prerelease
+        id: prerelease
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          if [[ "$TAG" == *beta* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           draft: false
-          prerelease: false
-          make_latest: true
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
+          make_latest: ${{ steps.prerelease.outputs.is_prerelease != 'true' }}
           generate_release_notes: true
           body: |
             ## Wilson Term ${{ github.ref_name }}
