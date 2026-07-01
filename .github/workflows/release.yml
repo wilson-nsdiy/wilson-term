@@ -4,11 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to release (e.g. v0.1.0)'
-        required: true
 
 permissions:
   contents: write
@@ -73,7 +68,7 @@ jobs:
             console.log('Version set to ' + version);
           "
         env:
-          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          TAG: ${{ github.ref_name }}
 
       - name: Install dependencies
         run: npm ci
@@ -117,7 +112,7 @@ jobs:
       - name: Determine prerelease
         id: prerelease
         run: |
-          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          TAG="${{ github.ref_name }}"
           if [[ "$TAG" == *beta* ]]; then
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
           else
@@ -165,6 +160,14 @@ jobs:
 
             - Windows 10+ / Linux（Ubuntu 20.04+ / Debian 11+）
             - 串口功能需要硬件权限（Linux 需加入 `dialout` 组）
+
+            ### 更新日志
+
+            详见下方自动生成的 **What's Changed** 段落。
+
+            ---
+
+            💬 发现问题？请提交 [Issue](https://github.com/${{ github.repository }}/issues)
           files: |
             release-artifacts/**/*.exe
             release-artifacts/**/*.AppImage
