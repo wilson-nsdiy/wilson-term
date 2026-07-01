@@ -2,7 +2,10 @@
   "name": "wilson-terminal",
   "version": "0.8.0",
   "description": "Wilson 的 SSH / Telnet / 串口模拟终端",
-  "author": "Wilson",
+  "author": {
+    "name": "Wilson",
+    "email": "zhouws-chn@gitee.com"
+  },
   "main": "./dist/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
