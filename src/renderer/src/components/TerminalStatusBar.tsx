@@ -112,7 +112,7 @@ const TerminalStatusBar: React.FC<TerminalStatusBarProps> = ({ sessionId }) => {
       {/* 左侧：连接类型 + 连接信息 + 会话状态 */}
       <div className="flex items-center gap-3 overflow-hidden">
         <span
-          className="px-1.5 py-0 rounded text-[10px] font-mono font-bold shrink-0"
+          className="px-1 py-0 rounded text-[10px] font-mono font-bold shrink-0"
           style={{
             backgroundColor: sessionConfig?.type === 'ssh' ? '#2a4a6a' : sessionConfig?.type === 'telnet' ? '#4a4a6a' : sessionConfig?.type === 'bash' ? '#6a4a2a' : '#2a5a4a',
             color: sessionConfig?.type === 'ssh' ? '#89b4fa' : sessionConfig?.type === 'telnet' ? '#c5a0fa' : sessionConfig?.type === 'bash' ? '#fab387' : '#a6e3a1'
@@ -128,7 +128,7 @@ const TerminalStatusBar: React.FC<TerminalStatusBarProps> = ({ sessionId }) => {
       <div className="flex items-center gap-1.5 shrink-0">
         {activeTaskCount > 0 && (
           <span
-            className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+            className="px-1 py-0 rounded text-[10px] font-mono font-bold"
             style={{ backgroundColor: '#4a3a2a', color: '#fab387', border: '1px solid #6a5a4a' }}
           >
             ⏱ {activeTaskCount}
@@ -137,7 +137,7 @@ const TerminalStatusBar: React.FC<TerminalStatusBarProps> = ({ sessionId }) => {
         {pluginItems.map(item => (
           <span
             key={item.pluginId}
-            className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
+            className="px-1 py-0 rounded text-[10px] font-mono font-bold"
             style={item.style}
             title={item.tooltip}
           >
