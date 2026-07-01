@@ -6,7 +6,6 @@ directories:
   output: release
 files:
   - dist/**/*
-  - CHANGELOG.json
 asarUnpack:
   - node_modules/serialport/**/*
   - node_modules/@serialport/**/*
@@ -22,6 +21,10 @@ win:
   target:
     - nsis
   icon: resources/icon.ico
+publish:
+  provider: github
+  owner: wilson-nsdiy
+  repo: wilson-term
 nsis:
   artifactName: Wilson-Term-v${version}-win-x64.${ext}
   oneClick: false

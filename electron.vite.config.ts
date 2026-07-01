@@ -9,7 +9,7 @@ export default defineConfig({
       outDir: 'dist/main',
       minify: true
     },
-    plugins: [externalizeDepsPlugin({ include: ['electron'] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater'] })],
     resolve: {
       alias: {
         '@shared': resolve('src/shared')
@@ -21,7 +21,7 @@ export default defineConfig({
       outDir: 'dist/preload',
       minify: true
     },
-    plugins: [externalizeDepsPlugin({ include: ['electron'] })],
+    plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: {
         '@shared': resolve('src/shared')
