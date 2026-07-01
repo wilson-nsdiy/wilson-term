@@ -325,35 +325,31 @@ export interface KeyboardAPI {
   setPollingEnabled: (enabled: boolean) => void
 }
 
-/** 更新检查结果 */
-/** 版本更新条目 */
-export interface VersionEntry {
-  version: string
-  date?: string
-  author?: string
-  changes: string[]
-}
+/** 更新状态 */
+export type UpdateStatus = 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
 
-export interface UpdateCheckResult {
-  hasUpdate: boolean
-  currentVersion: string
-  remoteVersion?: string
+/** 更新信息快照 */
+export interface UpdateInfoSnapshot {
+  version: string
   releaseDate?: string
-  downloadUrl?: string
-  releaseNotes?: string
-  author?: string
-  error?: string
-  /** 跳过本次检查（距上次检查不到 24 小时） */
-  skipped?: boolean
-  /** 所有新版本的更新信息列表 */
-  versions?: VersionEntry[]
+  releaseNotes?: string | null
 }
 
-/** 更新日志条目 */
-export interface ChangelogEntry {
-  version: string
-  date: string
-  changes: string[]
+/** 下载进度快照 */
+export interface UpdateProgressSnapshot {
+  bytesPerSecond: number
+  percent: number
+  total: number
+  transferred: number
+}
+
+/** 更新状态快照 */
+export interface UpdateStatusSnapshot {
+  status: UpdateStatus
+  info?: UpdateInfoSnapshot
+  progress?: UpdateProgressSnapshot
+  error?: string
+  autoInstallCountdown?: number
 }
 
 /** 定时任务定义 */
@@ -381,10 +377,14 @@ export interface ScheduledTask {
 /** 应用 API */
 export interface AppAPI {
   getVersion: () => Promise<string>
-  checkUpdate: (manual?: boolean) => Promise<UpdateCheckResult>
-  getChangelog: () => Promise<ChangelogEntry[]>
+  checkUpdate: () => Promise<UpdateStatusSnapshot>
+  downloadUpdate: () => Promise<void>
+  installUpdate: () => void
+  cancelAutoInstall: () => void
+  getUpdateStatus: () => Promise<UpdateStatusSnapshot>
   getIgnoredVersions: () => Promise<string[]>
   saveIgnoredVersions: (versions: string[]) => Promise<void>
+  onUpdateStatusChanged: (callback: (snapshot: UpdateStatusSnapshot) => void) => () => void
   getDomain: () => Promise<string>
   getSystemFonts: () => Promise<string[]>
 }

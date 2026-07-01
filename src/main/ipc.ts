@@ -4,10 +4,10 @@ import { readFileSync } from 'fs'
 import { networkInterfaces } from 'os'
 import { registerConnectionHandlers, registerSSHSpecificHandlers, registerSerialSpecificHandlers, registerBashSpecificHandlers, getActiveClientsMap, connectionManager } from './connection/ipc'
 import { registerSFTPHandlers, setActiveConnectionsGetter } from './sftp'
-import { loadSavedSessionsFromDisk, saveSavedSessionsToDisk, loadIgnoredVersionsFromDisk, saveIgnoredVersionsFromDisk, loadLastUpdateCheckTime, saveLastUpdateCheckTime, loadCommandButtonGroupsFromDisk, saveCommandButtonGroupsToDisk, loadAppSettingsFromDisk, saveAppSettingsToDisk, loadViewStateFromDisk, saveViewStateToDisk, loadScheduledTasksFromDisk, saveScheduledTasksToDisk, loadProfilesFromDisk, saveProfilesToDisk } from './storage'
+import { loadSavedSessionsFromDisk, saveSavedSessionsToDisk, loadIgnoredVersionsFromDisk, saveIgnoredVersionsFromDisk, loadCommandButtonGroupsFromDisk, saveCommandButtonGroupsToDisk, loadAppSettingsFromDisk, saveAppSettingsToDisk, loadViewStateFromDisk, saveViewStateToDisk, loadScheduledTasksFromDisk, saveScheduledTasksToDisk, loadProfilesFromDisk, saveProfilesToDisk } from './storage'
 import { logManager } from './logger'
 import { appLogger } from './app-logger'
-import { checkForUpdate, getAppVersion, getChangelog } from './updater'
+import { checkForUpdates, getCurrentVersion, downloadUpdate, quitAndInstall, cancelAutoInstall, getStatus, getIgnoredVersions, saveIgnoredVersions } from './updater'
 import { getKeyboardLockState } from './keyboard'
 import { getComputerDomain } from './domain'
 import { mainPluginHost } from './plugin-host'
@@ -169,41 +169,41 @@ export function registerIpcHandlers(): void {
 
   // 应用版本
   ipcMain.handle('app:get-version', () => {
-    return getAppVersion()
+    return getCurrentVersion()
   })
 
-  // 检查更新（自动检查每天最多请求一次，手动检查始终执行）
-  ipcMain.handle('app:check-update', async (_event, manual?: boolean) => {
-    const lastCheckTime = loadLastUpdateCheckTime()
-    const now = Date.now()
-    const ONE_DAY_MS = 24 * 60 * 60 * 1000
-
-    // 如果是自动检查且距离上次检查不到 24 小时，跳过请求
-    if (!manual && now - lastCheckTime < ONE_DAY_MS) {
-      return {
-        hasUpdate: false,
-        currentVersion: getAppVersion(),
-        skipped: true
-      }
-    }
-
-    // 更新检查时间戳
-    saveLastUpdateCheckTime(now)
-    return checkForUpdate()
+  // 检查更新
+  ipcMain.handle('app:check-update', () => {
+    return checkForUpdates()
   })
 
-  // 获取更新日志
-  ipcMain.handle('app:get-changelog', () => {
-    return getChangelog()
+  // 下载更新
+  ipcMain.handle('app:download-update', () => {
+    return downloadUpdate()
+  })
+
+  // 安装更新
+  ipcMain.handle('app:install-update', () => {
+    quitAndInstall()
+  })
+
+  // 取消自动安装倒计时
+  ipcMain.handle('app:cancel-auto-install', () => {
+    cancelAutoInstall()
+  })
+
+  // 获取更新状态
+  ipcMain.handle('app:get-update-status', () => {
+    return getStatus()
   })
 
   // 忽略版本
   ipcMain.handle('app:get-ignored-versions', () => {
-    return loadIgnoredVersionsFromDisk()
+    return getIgnoredVersions()
   })
 
   ipcMain.handle('app:save-ignored-versions', (_event, versions: string[]) => {
-    saveIgnoredVersionsToDisk(versions)
+    saveIgnoredVersions(versions)
   })
 
   // 存储：按钮栏分组数据

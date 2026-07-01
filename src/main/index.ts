@@ -5,6 +5,7 @@ import { logManager } from './logger'
 import { setupGlobalErrorHandling } from './app-logger'
 import { getKeyboardLockState } from './keyboard'
 import { mainPluginHost } from './plugin-host'
+import { initAutoUpdater } from './updater'
 import type { KeyboardLockState } from './keyboard'
 
 // 消除 Windows 上 GPU 着色器缓存创建失败的日志噪音
@@ -167,7 +168,8 @@ app.whenReady().then(async () => {
 
   registerIpcHandlers()
 
-  createWindow()
+  const mainWindow = createWindow()
+  initAutoUpdater(mainWindow)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

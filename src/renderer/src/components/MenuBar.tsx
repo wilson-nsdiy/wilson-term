@@ -36,13 +36,14 @@ interface MenuDef {
 const MenuBar: React.FC = () => {
   const [openMenuIndex, setOpenMenuIndex] = useState<number | null>(null)
   const [aboutDialogOpen, setAboutDialogOpen] = useState(false)
-  const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
   const [globalOptionsDialogOpen, setGlobalOptionsDialogOpen] = useState(false)
   const [scheduledTaskDialogOpen, setScheduledTaskDialogOpen] = useState(false)
   const [pluginManagerOpen, setPluginManagerOpen] = useState(false)
   const menuBarRef = useRef<HTMLDivElement>(null)
 
   const hasNewVersion = useAppStore((state) => state.hasNewVersion)
+  const updateDialogOpen = useAppStore((state) => state.updateDialogOpen)
+  const setUpdateDialogOpen = useAppStore((state) => state.setUpdateDialogOpen)
   const commandInputVisible = useAppStore((state) => state.commandInputVisible)
   const statusBarVisible = useAppStore((state) => state.statusBarVisible)
   const buttonBarVisible = useAppStore((state) => state.buttonBarVisible)
