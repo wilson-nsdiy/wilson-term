@@ -21,10 +21,6 @@ win:
   target:
     - nsis
   icon: resources/icon.ico
-publish:
-  provider: github
-  owner: wilson-nsdiy
-  repo: wilson-term
 nsis:
   artifactName: Wilson-Term-v${version}-win-x64.${ext}
   oneClick: false
@@ -36,4 +32,8 @@ linux:
     - AppImage
     - deb
   icon: resources/icon-256.png
+publish:
+  provider: github
+  owner: wilson-nsdiy
+  repo: wilson-term
 afterPack: build/afterPack.js
