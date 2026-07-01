@@ -20,6 +20,8 @@ interface AppState {
   settingsDialogOpen: boolean
   /** 是否有新版本（用于菜单栏角标） */
   hasNewVersion: boolean
+  /** 手动检查更新对话框是否打开（打开时抑制 Toast） */
+  updateDialogOpen: boolean
   /** 每个会话的键盘锁状态 */
   keyboardLockStates: Record<string, KeyboardLockState>
   /** 命令行输入框是否可见 */
@@ -87,6 +89,7 @@ interface AppState {
 
   // Actions - 新版本角标
   setHasNewVersion: (has: boolean) => void
+  setUpdateDialogOpen: (open: boolean) => void
 
   // Actions - 键盘锁状态
   updateKeyboardLockState: (sessionId: string, state: KeyboardLockState) => void
@@ -188,6 +191,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   newConnectDialogOpen: false,
   settingsDialogOpen: false,
   hasNewVersion: false,
+  updateDialogOpen: false,
   keyboardLockStates: {},
   commandInputVisible: false,
   commandInputText: '',
@@ -396,6 +400,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   // ---- 新版本角标 Actions ----
 
   setHasNewVersion: (has) => set({ hasNewVersion: has }),
+
+  setUpdateDialogOpen: (open) => set({ updateDialogOpen: open }),
 
   // ---- 键盘锁状态 Actions ----
 

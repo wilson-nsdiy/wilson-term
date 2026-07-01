@@ -4,11 +4,11 @@ import TabBar from './components/TabBar'
 import Terminal from './components/Terminal'
 import Sidebar from './components/Sidebar'
 import SettingsDialog from './components/SettingsDialog'
-import UpdateDialog from './components/UpdateDialog'
 import SftpFileManager from './components/SftpFileManager'
 import HostKeyDialog from './components/HostKeyDialog'
 import PasswordDialog from './components/PasswordDialog'
 import PluginManager from './components/PluginManager'
+import UpdateToast from './components/UpdateToast'
 import { useAppStore } from './store'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import type { HostKeyVerifyRequest, PasswordRequest } from '@shared/types'
@@ -17,8 +17,6 @@ const App: React.FC = () => {
   const loadSavedSessions = useAppStore((state) => state.loadSavedSessions)
   const settingsDialogOpen = useAppStore((state) => state.settingsDialogOpen)
   const setSettingsDialogOpen = useAppStore((state) => state.setSettingsDialogOpen)
-  const setHasNewVersion = useAppStore((state) => state.setHasNewVersion)
-  const [autoCheckOpen, setAutoCheckOpen] = useState(false)
   const [hostKeyRequest, setHostKeyRequest] = useState<HostKeyVerifyRequest | null>(null)
   const [passwordRequest, setPasswordRequest] = useState<PasswordRequest | null>(null)
 
@@ -65,15 +63,7 @@ const App: React.FC = () => {
       }
 
       // 自动检查更新
-      window.api.app.checkUpdate().then((res) => {
-        if (res.hasUpdate) {
-          setHasNewVersion(true)
-        }
-        // 只有在有更新且未被跳过时才打开自动检查弹窗
-        if (res.hasUpdate && !res.skipped) {
-          setAutoCheckOpen(true)
-        }
-      })
+      window.api.app.checkUpdate()
     }
     loadSavedSessions()
     init()
@@ -105,12 +95,8 @@ const App: React.FC = () => {
         onClose={() => setSettingsDialogOpen(false)}
       />
 
-      {/* 启动时自动检查更新（仅在有新版本时弹窗） */}
-      <UpdateDialog
-        open={autoCheckOpen}
-        autoCheck
-        onClose={() => setAutoCheckOpen(false)}
-      />
+      {/* 自动检查更新 Toast 通知 */}
+      <UpdateToast />
 
       {/* SFTP 文件管理器 */}
       <SftpFileManager />
