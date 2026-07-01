@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
-import type { LogConfig, HostKeyVerifyRequest, KeyboardLockState, PasswordRequest } from '@shared/types'
+import type { LogConfig, HostKeyVerifyRequest, KeyboardLockState, PasswordRequest, UpdateStatusSnapshot } from '@shared/types'
 
 // 自定义 API 暴露给渲染进程
 const api = {
@@ -135,10 +135,19 @@ const api = {
   // 应用更新
   app: {
     getVersion: () => ipcRenderer.invoke('app:get-version'),
-    checkUpdate: (manual?: boolean) => ipcRenderer.invoke('app:check-update', manual),
-    getChangelog: () => ipcRenderer.invoke('app:get-changelog'),
+    checkUpdate: () => ipcRenderer.invoke('app:check-update'),
+    downloadUpdate: () => ipcRenderer.invoke('app:download-update'),
+    installUpdate: () => ipcRenderer.invoke('app:install-update'),
+    cancelAutoInstall: () => ipcRenderer.invoke('app:cancel-auto-install'),
+    getUpdateStatus: () => ipcRenderer.invoke('app:get-update-status'),
     getIgnoredVersions: () => ipcRenderer.invoke('app:get-ignored-versions'),
     saveIgnoredVersions: (versions: string[]) => ipcRenderer.invoke('app:save-ignored-versions', versions),
+    onUpdateStatusChanged: (callback: (snapshot: UpdateStatusSnapshot) => void) => {
+      const subscription = (_event: Electron.IpcRendererEvent, snapshot: UpdateStatusSnapshot) =>
+        callback(snapshot)
+      ipcRenderer.on('update:status-changed', subscription)
+      return () => ipcRenderer.removeListener('update:status-changed', subscription)
+    },
     getDomain: () => ipcRenderer.invoke('app:get-domain'),
     getSystemFonts: () => ipcRenderer.invoke('app:get-system-fonts')
   },
