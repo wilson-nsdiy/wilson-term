@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  IS_PRERELEASE: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') || contains(github.ref_name, '-dev') || contains(github.ref_name, '-canary') }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -30,6 +33,55 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Validate CHANGELOG.md
+        run: |
+          echo "=== Validating CHANGELOG.md ==="
+
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::error::CHANGELOG.md not found"
+            exit 1
+          fi
+
+          # Check [Unreleased] section exists
+          if ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+            echo "::error::Missing '## [Unreleased]' section in CHANGELOG.md"
+            exit 1
+          fi
+
+          # Check version headers format: ## [vX.Y.Z] or ## [vX.Y.Z-beta.N] etc.
+          INVALID=$(grep '^## \[' CHANGELOG.md | grep -v '^## \[Unreleased\]' | grep -vE '^## \[v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$' || true)
+          if [ -n "$INVALID" ]; then
+            echo "::error::Invalid version header format (expected '## [vX.Y.Z] - YYYY-MM-DD'):"
+            echo "$INVALID"
+            exit 1
+          fi
+
+          # Check no duplicate versions
+          VERSIONS=$(grep -oP '^## \[\Kv[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?' CHANGELOG.md || true)
+          DUPLICATES=$(echo "$VERSIONS" | sort | uniq -d)
+          if [ -n "$DUPLICATES" ]; then
+            echo "::error::Duplicate version entries found:"
+            echo "$DUPLICATES"
+            exit 1
+          fi
+
+          # Check tag version exists in CHANGELOG (fatal for stable, warning for prerelease)
+          TAG_VERSION="${{ github.ref_name }}"
+          if grep -q "^## \[${TAG_VERSION}\]" CHANGELOG.md; then
+            echo "Tag version '${TAG_VERSION}' found in CHANGELOG.md"
+          else
+            if [ "${IS_PRERELEASE}" = "true" ]; then
+              echo "::warning::Tag version '${TAG_VERSION}' not found in CHANGELOG.md (prerelease, skipping)"
+            else
+              echo "::error::Tag version '${TAG_VERSION}' not found in CHANGELOG.md"
+              exit 1
+            fi
+          fi
+
+          echo "CHANGELOG.md validation passed"
+        env:
+          IS_PRERELEASE: ${{ env.IS_PRERELEASE }}
+
   build:
     needs: check
     strategy:
@@ -44,6 +96,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Validate version match
+        shell: bash
+        run: |
+          TAG_VERSION="${TAG#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_MAJOR_MINOR_PATCH=$(echo "$TAG_VERSION" | cut -d'-' -f1)
+          PKG_MAJOR_MINOR_PATCH=$(echo "$PKG_VERSION" | cut -d'-' -f1)
+
+          echo "Tag X.Y.Z:      $TAG_MAJOR_MINOR_PATCH"
+          echo "Package X.Y.Z:  $PKG_MAJOR_MINOR_PATCH"
+
+          if [ "$TAG_MAJOR_MINOR_PATCH" != "$PKG_MAJOR_MINOR_PATCH" ]; then
+            echo "::error::Version mismatch! Tag is v$TAG_MAJOR_MINOR_PATCH but package.json is v$PKG_MAJOR_MINOR_PATCH"
+            exit 1
+          fi
+        env:
+          TAG: ${{ github.ref_name }}
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -55,20 +125,6 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           vsversion: 2022
-
-      - name: Set version from tag
-        run: |
-          node -e "
-            const fs = require('fs');
-            const tag = process.env.TAG;
-            const version = tag.replace(/^v/, '');
-            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-            pkg.version = version;
-            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-            console.log('Version set to ' + version);
-          "
-        env:
-          TAG: ${{ github.ref_name }}
 
       - name: Install dependencies
         run: npm ci
@@ -112,55 +168,78 @@ jobs:
       - name: Remove builder-debug files
         run: find release-artifacts/ -name "builder-debug.yml" -delete -print || true
 
-      - name: Determine prerelease
-        id: prerelease
+      - name: Extract changelog for version
+        id: changelog
         run: |
-          TAG="${{ github.ref_name }}"
-          if [[ "$TAG" == *beta* ]]; then
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          echo "Extracting changelog for version: $TAG"
+
+          # For prerelease tags, fall back to base version (e.g. v0.10.5-alpha.3 -> v0.10.5)
+          BASE_VERSION=$(echo "$TAG" | sed 's/-[a-z0-9.]*$//')
+          if [ "$TAG" != "$BASE_VERSION" ]; then
+            echo "Prerelease detected, will try base version: $BASE_VERSION"
           fi
 
-      - name: Get tag message
-        id: tag_message
-        run: |
-          MESSAGE=$(git tag -l --format='%(contents:body)' "$TAG")
-          echo "Tag message: $MESSAGE"
-          echo "message<<EOF" >> $GITHUB_OUTPUT
-          echo "$MESSAGE" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          extract_changelog() {
+            awk -v ver="$1" '
+              /^## \[/ {
+                if (found) exit
+                gsub(/[[\]]/, "")
+                gsub(/^## /, "")
+                sub(/ - .*/, "")
+                if ($0 == ver) found=1
+                next
+              }
+              found && /^## \[/ { exit }
+              found { print }
+            ' CHANGELOG.md
+          }
+
+          CHANGELOG=""
+          VERSIONS=("$TAG")
+          if [ "$TAG" != "$BASE_VERSION" ]; then
+            VERSIONS+=("$BASE_VERSION")
+          fi
+          for VER in "${VERSIONS[@]}"; do
+            RAW=$(extract_changelog "$VER")
+            # Trim leading/trailing blank lines
+            CHANGELOG=$(printf '%s\n' "$RAW" | sed '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba}')
+            if [ -n "$CHANGELOG" ]; then
+              echo "Changelog extracted using version: $VER"
+              break
+            fi
+          done
+
+          echo "Changelog content:"
+          echo "$CHANGELOG"
+
+          # Build release body to file
+          printf '## Wilson Term %s\n\nWilson Term 是一个支持 SSH / Telnet / 串口 / 本地终端连接的模拟终端。\n' "$TAG" > release-body.md
+
+          if [ -n "$CHANGELOG" ]; then
+            printf '\n%s\n' "$CHANGELOG" >> release-body.md
+          fi
+
+          printf '\n### 下载安装\n\n' >> release-body.md
+          printf '| 平台 | 文件 | 说明 |\n' >> release-body.md
+          printf '|------|------|------|\n' >> release-body.md
+          printf '| Windows | `Wilson-Term-%s-win-x64.exe` | NSIS 安装程序 |\n' "$TAG" >> release-body.md
+          printf '| Linux (AppImage) | `Wilson-Term-%s-linux-x64.AppImage` | `chmod +x` 后运行 |\n' "$TAG" >> release-body.md
+          printf '| Linux (deb) | `Wilson-Term-%s-linux-x64.deb` | `sudo dpkg -i` 安装 |\n' "$TAG" >> release-body.md
+          printf '\n### 系统要求\n\n' >> release-body.md
+          printf '%s\n' '- Windows 10+ / Linux（Ubuntu 20.04+ / Debian 11+）' >> release-body.md
+          printf '%s\n' '- 串口功能需要硬件权限（Linux 需加入 `dialout` 组）' >> release-body.md
+          printf '\n---\n\n💬 发现问题？请提交 [Issue](https://github.com/%s/issues)\n' "$REPO" >> release-body.md
         env:
           TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           draft: false
-          prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
-          make_latest: ${{ steps.prerelease.outputs.is_prerelease != 'true' }}
-          body: |
-            ## Wilson Term ${{ github.ref_name }}
-
-            Wilson Term 是一个支持 SSH / Telnet / 串口 / 本地终端连接的模拟终端。
-
-            ${{ steps.tag_message.outputs.message && format('### 更新内容\n\n{0}\n', steps.tag_message.outputs.message) || '' }}
-            ### 下载安装
-
-            | 平台 | 文件 | 说明 |
-            |------|------|------|
-            | Windows | `Wilson-Term-${{ github.ref_name }}-win-x64.exe` | NSIS 安装程序 |
-            | Linux (AppImage) | `Wilson-Term-${{ github.ref_name }}-linux-x64.AppImage` | `chmod +x` 后运行 |
-            | Linux (deb) | `Wilson-Term-${{ github.ref_name }}-linux-x64.deb` | `sudo dpkg -i` 安装 |
-
-            ### 系统要求
-
-            - Windows 10+ / Linux（Ubuntu 20.04+ / Debian 11+）
-            - 串口功能需要硬件权限（Linux 需加入 `dialout` 组）
-
-            ---
-
-            💬 发现问题？请提交 [Issue](https://github.com/${{ github.repository }}/issues)
+          prerelease: ${{ env.IS_PRERELEASE }}
+          make_latest: ${{ env.IS_PRERELEASE != 'true' }}
+          body_path: release-body.md
           files: |
             release-artifacts/**/*.exe
             release-artifacts/**/*.AppImage
