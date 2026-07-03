@@ -614,7 +614,7 @@ const Sidebar: React.FC = () => {
                     return (
                       <div key={`group-${item.group.id}`}>
                         <div
-                          style={{ paddingLeft: `${item.depth * 16 + 24}px` }}
+                          style={{ paddingLeft: `${item.depth * 16 + 8}px` }}
                           className={`flex items-center gap-1 px-2 py-1.5 cursor-pointer hover:bg-gray-700 rounded text-sm text-gray-300 select-none ${
                             dragType === 'group' && dragGroupId === item.group.id ? 'opacity-50' : ''
                           } ${dropIndex === index && dragType === 'group' && dragGroupId !== item.group.id ? 'border-t-2 border-blue-400' : ''}`}
@@ -712,7 +712,7 @@ const Sidebar: React.FC = () => {
                         }}
                         onDoubleClick={() => handleSavedSessionConnect(saved)}
                         onContextMenu={(e) => handleContextMenu(e, saved)}
-                        style={{ paddingLeft: `${item.depth * 16 + 24}px` }}
+                        style={{ paddingLeft: `${item.depth * 16 + 8}px` }}
                         className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-default transition-colors text-sm text-gray-300 select-none ${
                           dragType === 'session' && dragIndex === index ? 'opacity-50' : 'hover:bg-gray-700'
                         } ${dropIndex === index && dragType === 'session' && dragIndex !== null && dragIndex !== index ? 'border-t-2 border-blue-400' : ''}`}
