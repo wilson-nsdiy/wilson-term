@@ -95,6 +95,8 @@ const api = {
   storage: {
     loadSavedSessions: () => ipcRenderer.invoke('storage:load-saved-sessions'),
     saveSavedSessions: (sessions: unknown) => ipcRenderer.invoke('storage:save-saved-sessions', sessions),
+    loadSavedSessionGroups: () => ipcRenderer.invoke('storage:loadSavedSessionGroups'),
+    saveSavedSessionGroups: (groups: unknown) => ipcRenderer.invoke('storage:saveSavedSessionGroups', groups),
     loadCommandButtonGroups: () => ipcRenderer.invoke('storage:load-command-button-groups'),
     saveCommandButtonGroups: (groups: unknown) => ipcRenderer.invoke('storage:save-command-button-groups', groups),
     loadAppSettings: () => ipcRenderer.invoke('storage:load-app-settings'),

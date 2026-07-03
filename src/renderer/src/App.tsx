@@ -45,6 +45,9 @@ const App: React.FC = () => {
       await useAppStore.getState().loadViewState()
 
       await useAppStore.getState().initDefaultLogDir()
+      // 加载会话分组数据
+      await useAppStore.getState().loadSessionGroups()
+
       // 加载按钮栏分组数据
       await useAppStore.getState().loadCommandButtonGroups()
 
