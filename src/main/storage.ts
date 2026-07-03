@@ -24,7 +24,7 @@ function getStoragePath(filename: string): string {
   return join(getStorageDir(), filename)
 }
 
-/** 从磁盘加载保存的会话 */
+/** 从磁盘加载保存的会话（过滤掉无 config 字段的无效记录） */
 export function loadSavedSessionsFromDisk(): SavedSession[] {
   const filePath = getStoragePath('saved-sessions.json')
   if (!existsSync(filePath)) {
@@ -32,7 +32,8 @@ export function loadSavedSessionsFromDisk(): SavedSession[] {
   }
   try {
     const data = readFileSync(filePath, 'utf-8')
-    return JSON.parse(data) as SavedSession[]
+    const sessions = JSON.parse(data) as SavedSession[]
+    return sessions.filter(s => s && s.config)
   } catch {
     return []
   }

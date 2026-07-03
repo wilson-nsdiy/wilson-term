@@ -120,10 +120,12 @@ const Sidebar: React.FC = () => {
   }
 
   const handleSavedSessionConnect = (saved: SavedSession) => {
+    if (!saved.config) return
     doConnect(saved.config, saved.scheduledTasks || [], saved.profileId)
   }
 
   const handleEditSavedSession = (saved: SavedSession) => {
+    if (!saved.config) return
     setEditingSavedSessionId(saved.id)
     setEditingConfig(saved.config)
     setNewConnectDialogOpen(true)
@@ -246,15 +248,16 @@ const Sidebar: React.FC = () => {
         {/* 保存的连接 */}
         <div className="flex-1 overflow-y-auto p-3">
           {(() => {
+            const validSessions = savedSessions.filter(s => s.config)
             const filteredSessions = searchKeyword.trim()
-              ? savedSessions.filter(saved => 
+              ? validSessions.filter(saved =>
                   saved.name.toLowerCase().includes(searchKeyword.toLowerCase()) ||
                   (saved.config.type === 'ssh' && saved.config.host?.toLowerCase().includes(searchKeyword.toLowerCase())) ||
                   (saved.config.type === 'telnet' && saved.config.host?.toLowerCase().includes(searchKeyword.toLowerCase())) ||
                   (saved.config.type === 'serial' && saved.config.port?.toLowerCase().includes(searchKeyword.toLowerCase()))
                 )
-              : savedSessions
-            
+              : validSessions
+
             return filteredSessions.length === 0 ? (
               <div className="text-sm text-gray-500 italic">{searchKeyword ? '未找到匹配的连接' : '暂无保存的连接'}</div>
             ) : (
