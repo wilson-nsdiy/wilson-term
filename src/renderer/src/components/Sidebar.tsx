@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useAppStore } from '../store'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import NewConnectDialog from './NewConnectDialog'
+import InputDialog from './InputDialog'
 import { resolveLogConfig } from '../utils/logConfig'
 import type { SavedSession, SavedSessionGroup, ConnectionConfig, ScheduledTask } from '@shared/types'
 
@@ -55,6 +56,14 @@ const Sidebar: React.FC = () => {
   // 新建菜单状态
   const [newMenuOpen, setNewMenuOpen] = useState(false)
   const newMenuRef = useRef<HTMLDivElement>(null)
+
+  // 输入对话框状态
+  const [inputDialogOpen, setInputDialogOpen] = useState(false)
+  const [inputDialogTitle, setInputDialogTitle] = useState('')
+  const [inputDialogMessage, setInputDialogMessage] = useState('')
+  const [inputDialogDefault, setInputDialogDefault] = useState('')
+  const [inputDialogPlaceholder, setInputDialogPlaceholder] = useState('')
+  const inputDialogCallback = useRef<(value: string) => void>(() => {})
 
   // 拖拽排序状态
   const [dragIndex, setDragIndex] = useState<number | null>(null)
@@ -115,13 +124,36 @@ const Sidebar: React.FC = () => {
     setIsResizing(true)
   }
 
+  /** 显示输入对话框 */
+  const showInputDialog = (
+    title: string,
+    message: string,
+    defaultValue: string,
+    placeholder: string,
+    callback: (value: string) => void
+  ) => {
+    setInputDialogTitle(title)
+    setInputDialogMessage(message)
+    setInputDialogDefault(defaultValue)
+    setInputDialogPlaceholder(placeholder)
+    inputDialogCallback.current = callback
+    setInputDialogOpen(true)
+  }
+
   /** 新建目录 */
   const handleNewGroup = () => {
     setNewMenuOpen(false)
-    const name = prompt('新建目录名称')
-    if (name && name.trim()) {
-      addSessionGroup(name.trim())
-    }
+    showInputDialog(
+      '新建目录',
+      '请输入目录名称',
+      '',
+      '目录名称',
+      (name) => {
+        if (name && name.trim()) {
+          addSessionGroup(name.trim())
+        }
+      }
+    )
   }
 
   /** 新建连接 */
@@ -285,12 +317,22 @@ const Sidebar: React.FC = () => {
     const { group } = contextMenu
     if (!group) return
 
+    // 先关闭右键菜单
+    handleContextMenuClose()
+
     switch (action) {
       case 'rename': {
-        const newName = prompt('重命名分组', group.name)
-        if (newName && newName.trim()) {
-          updateSessionGroup(group.id, { name: newName.trim() })
-        }
+        showInputDialog(
+          '重命名分组',
+          '请输入新的分组名称',
+          group.name,
+          '分组名称',
+          (newName) => {
+            if (newName && newName.trim()) {
+              updateSessionGroup(group.id, { name: newName.trim() })
+            }
+          }
+        )
         break
       }
       case 'delete': {
@@ -300,21 +342,34 @@ const Sidebar: React.FC = () => {
         break
       }
       case 'addSubgroup': {
-        const name = prompt('新建子分组名称')
-        if (name && name.trim()) {
-          addSessionGroup(name.trim(), group.id)
-        }
+        showInputDialog(
+          '新建子分组',
+          '请输入子分组名称',
+          '',
+          '子分组名称',
+          (name) => {
+            if (name && name.trim()) {
+              addSessionGroup(name.trim(), group.id)
+            }
+          }
+        )
         break
       }
       case 'addGroup': {
-        const name = prompt('新建分组名称')
-        if (name && name.trim()) {
-          addSessionGroup(name.trim(), group.parentId)
-        }
+        showInputDialog(
+          '新建同级分组',
+          '请输入分组名称',
+          '',
+          '分组名称',
+          (name) => {
+            if (name && name.trim()) {
+              addSessionGroup(name.trim(), group.parentId)
+            }
+          }
+        )
         break
       }
     }
-    handleContextMenuClose()
   }
 
   /** 构建侧边栏列表项（分组和未分组连接混合排序，支持搜索过滤） */
@@ -762,6 +817,20 @@ const Sidebar: React.FC = () => {
         editConfig={editingConfig}
         onEdit={handleConfigEdit}
         onSaveAndConnect={handleSaveAndConnect}
+      />
+
+      {/* 输入对话框 */}
+      <InputDialog
+        open={inputDialogOpen}
+        title={inputDialogTitle}
+        message={inputDialogMessage}
+        defaultValue={inputDialogDefault}
+        placeholder={inputDialogPlaceholder}
+        onConfirm={(value) => {
+          setInputDialogOpen(false)
+          inputDialogCallback.current(value)
+        }}
+        onCancel={() => setInputDialogOpen(false)}
       />
     </>
   )
