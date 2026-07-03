@@ -13,6 +13,7 @@ let downloadProgress: UpdateProgressSnapshot | undefined
 let lastError: string | undefined
 let autoInstallTimer: ReturnType<typeof setTimeout> | null = null
 let autoInstallCountdown = 0
+let isManual = false
 
 function sendToRenderer(channel: string, ...args: unknown[]): void {
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
@@ -26,7 +27,8 @@ function pushStatus(): void {
     info: updateInfo,
     progress: downloadProgress,
     error: lastError,
-    autoInstallCountdown: autoInstallCountdown > 0 ? autoInstallCountdown : undefined
+    autoInstallCountdown: autoInstallCountdown > 0 ? autoInstallCountdown : undefined,
+    manual: isManual
   }
   sendToRenderer('update:status-changed', snapshot)
 }
@@ -100,7 +102,8 @@ export function getStatus(): UpdateStatusSnapshot {
     info: updateInfo,
     progress: downloadProgress,
     error: lastError,
-    autoInstallCountdown: autoInstallCountdown > 0 ? autoInstallCountdown : undefined
+    autoInstallCountdown: autoInstallCountdown > 0 ? autoInstallCountdown : undefined,
+    manual: isManual
   }
 }
 
@@ -109,6 +112,7 @@ export function getCurrentVersion(): string {
 }
 
 export async function checkForUpdates(force = false): Promise<UpdateStatusSnapshot> {
+  isManual = force
   if (!app.isPackaged) {
     currentStatus = 'error'
     lastError = '开发模式下无法检查更新'
@@ -122,7 +126,6 @@ export async function checkForUpdates(force = false): Promise<UpdateStatusSnapsh
     if (lastCheck !== null) {
       const elapsed = Date.now() - lastCheck
       if (elapsed < AUTO_CHECK_INTERVAL_MS) {
-        // 距离上次检查不足7天，跳过自动检查
         currentStatus = 'not-available'
         updateInfo = undefined
         pushStatus()
