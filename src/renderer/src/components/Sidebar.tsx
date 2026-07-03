@@ -52,6 +52,10 @@ const Sidebar: React.FC = () => {
 
   const [searchKeyword, setSearchKeyword] = useState('')
 
+  // 新建菜单状态
+  const [newMenuOpen, setNewMenuOpen] = useState(false)
+  const newMenuRef = useRef<HTMLDivElement>(null)
+
   // 拖拽排序状态
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dropIndex, setDropIndex] = useState<number | null>(null)
@@ -89,9 +93,43 @@ const Sidebar: React.FC = () => {
     }
   }, [isResizing])
 
+  // 点击外部关闭新建菜单
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node)) {
+        setNewMenuOpen(false)
+      }
+    }
+
+    if (newMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [newMenuOpen])
+
   const handleResizeMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
     setIsResizing(true)
+  }
+
+  /** 新建目录 */
+  const handleNewGroup = () => {
+    setNewMenuOpen(false)
+    const name = prompt('新建目录名称')
+    if (name && name.trim()) {
+      addSessionGroup(name.trim())
+    }
+  }
+
+  /** 新建连接 */
+  const handleNewConnection = () => {
+    setNewMenuOpen(false)
+    setNewConnectDialogOpen(true)
+    setEditingConfig(null)
+    setEditingSavedSessionId(null)
   }
 
   /** 从 IPC 错误中提取用户友好的消息 */
@@ -470,12 +508,30 @@ const Sidebar: React.FC = () => {
         {/* 侧边栏头部 */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
           <span className="text-sm font-medium text-gray-300">会话管理</span>
-          <button
-            onClick={() => { setNewConnectDialogOpen(true); setEditingConfig(null); setEditingSavedSessionId(null) }}
-            className="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors"
-          >
-            新连接
-          </button>
+          <div className="relative" ref={newMenuRef}>
+            <button
+              onClick={() => setNewMenuOpen(!newMenuOpen)}
+              className="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors"
+            >
+              新建
+            </button>
+            {newMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 bg-gray-800 border border-gray-600 rounded-lg shadow-xl py-1 min-w-[120px] z-50">
+                <button
+                  onClick={handleNewGroup}
+                  className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 transition-colors"
+                >
+                  新建目录
+                </button>
+                <button
+                  onClick={handleNewConnection}
+                  className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 transition-colors"
+                >
+                  新建连接
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 搜索框 */}
