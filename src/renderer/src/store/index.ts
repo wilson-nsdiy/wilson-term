@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TerminalSession, AppSettings, ConnectionConfig, SavedSession, CommandButtonGroup, ViewState, KeyboardLockState, ScheduledTask, Profile, ProfileOverrides } from '@shared/types'
+import type { TerminalSession, AppSettings, ConnectionConfig, SavedSession, SavedSessionGroup, CommandButtonGroup, ViewState, KeyboardLockState, ScheduledTask, Profile, ProfileOverrides } from '@shared/types'
 import { createLogConfigFromSettings, resolveLogConfig } from '../utils/logConfig'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 /** 应用状态 */
@@ -35,6 +35,12 @@ interface AppState {
   sftpDialogOpen: boolean
   /** 全局选项对话框是否打开 */
   globalOptionsDialogOpen: boolean
+
+  // 分组管理
+  /** 保存的会话分组列表 */
+  savedSessionGroups: SavedSessionGroup[]
+  /** 折叠的分组 ID 集合 */
+  collapsedSessionGroupIds: Set<string>
 
   // 按钮栏
   /** 按钮栏是否可见 */
@@ -72,7 +78,7 @@ interface AppState {
   updateSessionProfile: (id: string, profileId: string) => void
 
   // Actions - 保存的会话模板
-  addSavedSession: (config: ConnectionConfig, name?: string) => string
+  addSavedSession: (config: ConnectionConfig, name?: string, groupId?: string) => string
   updateSavedSession: (id: string, updates: Partial<Pick<SavedSession, 'name' | 'config' | 'scheduledTasks' | 'profileId'>>) => void
   removeSavedSession: (id: string) => void
   /** 拖拽移动保存的会话顺序 */
@@ -80,6 +86,15 @@ interface AppState {
   connectSavedSession: (id: string) => string | null
   loadSavedSessions: () => Promise<void>
   persistSavedSessions: () => Promise<void>
+
+  // Actions - 分组管理
+  addSessionGroup: (name: string, parentId?: string) => string
+  updateSessionGroup: (id: string, updates: Partial<Pick<SavedSessionGroup, 'name' | 'parentId' | 'sessionIds' | 'order'>>) => void
+  removeSessionGroup: (id: string) => void
+  moveSessionGroup: (fromIndex: number, toIndex: number, parentId?: string) => void
+  toggleSessionGroupCollapsed: (id: string) => void
+  loadSessionGroups: () => Promise<void>
+  persistSessionGroups: () => Promise<void>
 
   // Actions - 设置
   updateSettings: (settings: Partial<AppSettings>) => void
@@ -198,6 +213,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   statusBarVisible: true,
   sftpDialogOpen: false,
   globalOptionsDialogOpen: false,
+  savedSessionGroups: [],
+  collapsedSessionGroupIds: new Set(),
   buttonBarVisible: false,
   commandButtonGroups: [],
   activeButtonGroupId: null,
@@ -283,13 +300,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // ---- 保存的会话模板 Actions ----
 
-  addSavedSession: (config, name?: string) => {
+  addSavedSession: (config, name?: string, groupId?: string) => {
     const id = generateId()
     const now = Date.now()
+    const { savedSessions, savedSessionGroups } = get()
+
+    // 计算 order
+    let order: number
+    if (groupId) {
+      const group = savedSessionGroups.find(g => g.id === groupId)
+      order = group ? group.sessionIds.length : 0
+    } else {
+      // 未分组连接的 order
+      const ungroupedSessions = savedSessions.filter(s => !s.groupId)
+      order = ungroupedSessions.length
+    }
+
     const savedSession: SavedSession = {
       id,
       name: name || config.name,
       config: { ...config },
+      groupId,
+      order,
       scheduledTasks: [],
       createdAt: now,
       updatedAt: now
@@ -297,7 +329,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({
       savedSessions: [...state.savedSessions, savedSession]
     }))
-    // 持久化
+
+    // 如果有 groupId，更新分组的 sessionIds
+    if (groupId) {
+      set((state) => ({
+        savedSessionGroups: state.savedSessionGroups.map(g =>
+          g.id === groupId ? { ...g, sessionIds: [...g.sessionIds, id], updatedAt: Date.now() } : g
+        )
+      }))
+      get().persistSessionGroups()
+    }
+
     get().persistSavedSessions()
     return id
   },
@@ -365,6 +407,125 @@ export const useAppStore = create<AppState>((set, get) => ({
       await window.api.storage.saveSavedSessions(savedSessions)
     } catch (err) {
       console.error('保存会话到磁盘失败:', err)
+    }
+  },
+
+  // ---- 分组管理 Actions ----
+
+  addSessionGroup: (name, parentId) => {
+    const id = generateId()
+    const now = Date.now()
+    const { savedSessionGroups } = get()
+
+    // 计算同级最大 order
+    const siblings = savedSessionGroups.filter(g => g.parentId === parentId)
+    const maxOrder = siblings.reduce((max, g) => Math.max(max, g.order), -1)
+
+    const group: SavedSessionGroup = {
+      id,
+      name,
+      parentId,
+      sessionIds: [],
+      order: maxOrder + 1,
+      createdAt: now,
+      updatedAt: now
+    }
+
+    set((state) => ({
+      savedSessionGroups: [...state.savedSessionGroups, group]
+    }))
+    get().persistSessionGroups()
+    return id
+  },
+
+  updateSessionGroup: (id, updates) => {
+    set((state) => ({
+      savedSessionGroups: state.savedSessionGroups.map(g =>
+        g.id === id ? { ...g, ...updates, updatedAt: Date.now() } : g
+      )
+    }))
+    get().persistSessionGroups()
+  },
+
+  removeSessionGroup: (id) => {
+    const { savedSessionGroups, savedSessions } = get()
+
+    // 递归获取所有子分组 ID
+    const getAllDescendantIds = (parentId: string): string[] => {
+      const children = savedSessionGroups.filter(g => g.parentId === parentId)
+      return [
+        ...children.map(c => c.id),
+        ...children.flatMap(c => getAllDescendantIds(c.id))
+      ]
+    }
+
+    const idsToRemove = [id, ...getAllDescendantIds(id)]
+
+    set((state) => ({
+      savedSessionGroups: state.savedSessionGroups.filter(g => !idsToRemove.includes(g.id)),
+      savedSessions: state.savedSessions.map(s => {
+        if (s.groupId && idsToRemove.includes(s.groupId)) {
+          return { ...s, groupId: undefined }
+        }
+        return s
+      })
+    }))
+    get().persistSessionGroups()
+    get().persistSavedSessions()
+  },
+
+  moveSessionGroup: (fromIndex, toIndex, parentId) => {
+    set((state) => {
+      const groups = [...state.savedSessionGroups]
+
+      // 获取指定 parentId 下的分组并排序
+      const siblings = groups.filter(g => g.parentId === parentId).sort((a, b) => a.order - b.order)
+      const otherGroups = groups.filter(g => g.parentId !== parentId)
+
+      if (fromIndex < 0 || fromIndex >= siblings.length || toIndex < 0 || toIndex >= siblings.length) {
+        return state
+      }
+
+      const [moved] = siblings.splice(fromIndex, 1)
+      siblings.splice(toIndex, 0, moved)
+
+      // 更新 order
+      const updatedSiblings = siblings.map((g, i) => ({ ...g, order: i }))
+
+      return {
+        savedSessionGroups: [...otherGroups, ...updatedSiblings]
+      }
+    })
+    get().persistSessionGroups()
+  },
+
+  toggleSessionGroupCollapsed: (id) => {
+    set((state) => {
+      const newCollapsed = new Set(state.collapsedSessionGroupIds)
+      if (newCollapsed.has(id)) {
+        newCollapsed.delete(id)
+      } else {
+        newCollapsed.add(id)
+      }
+      return { collapsedSessionGroupIds: newCollapsed }
+    })
+  },
+
+  loadSessionGroups: async () => {
+    try {
+      const groups = await window.api.storage.loadSavedSessionGroups()
+      set({ savedSessionGroups: groups })
+    } catch (err) {
+      console.error('加载保存的会话分组失败:', err)
+    }
+  },
+
+  persistSessionGroups: async () => {
+    try {
+      const { savedSessionGroups } = get()
+      await window.api.storage.saveSavedSessionGroups(savedSessionGroups)
+    } catch (err) {
+      console.error('保存会话分组到磁盘失败:', err)
     }
   },
 

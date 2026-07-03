@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
-import type { SavedSession, CommandButtonGroup, AppSettings, ScheduledTask, Profile } from '@shared/types'
+import type { SavedSession, CommandButtonGroup, AppSettings, ScheduledTask, Profile, SavedSessionGroup } from '@shared/types'
 
 /** 视图状态（需要持久化的 UI 开关） */
 export interface ViewState {
@@ -33,7 +33,14 @@ export function loadSavedSessionsFromDisk(): SavedSession[] {
   try {
     const data = readFileSync(filePath, 'utf-8')
     const sessions = JSON.parse(data) as SavedSession[]
-    return sessions.filter(s => s && s.config)
+    // 兼容旧数据：为没有 groupId 和 order 的记录添加默认值
+    return sessions
+      .filter(s => s && s.config)
+      .map((s, index) => ({
+        ...s,
+        groupId: s.groupId,
+        order: s.order ?? index
+      }))
   } catch {
     return []
   }
@@ -229,4 +236,28 @@ export function saveLastAutoCheckTimestamp(timestamp: number): void {
     mkdirSync(dir, { recursive: true })
   }
   writeFileSync(filePath, JSON.stringify({ timestamp }), 'utf-8')
+}
+
+/** 从磁盘加载保存的会话分组 */
+export function loadSavedSessionGroupsFromDisk(): SavedSessionGroup[] {
+  const filePath = getStoragePath('saved-session-groups.json')
+  if (!existsSync(filePath)) {
+    return []
+  }
+  try {
+    const data = readFileSync(filePath, 'utf-8')
+    return JSON.parse(data) as SavedSessionGroup[]
+  } catch {
+    return []
+  }
+}
+
+/** 将保存的会话分组写入磁盘 */
+export function saveSavedSessionGroupsToDisk(groups: SavedSessionGroup[]): void {
+  const filePath = getStoragePath('saved-session-groups.json')
+  const dir = dirname(filePath)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  writeFileSync(filePath, JSON.stringify(groups, null, 2), 'utf-8')
 }

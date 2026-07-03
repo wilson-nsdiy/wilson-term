@@ -4,14 +4,14 @@ import { readFileSync } from 'fs'
 import { networkInterfaces } from 'os'
 import { registerConnectionHandlers, registerSSHSpecificHandlers, registerSerialSpecificHandlers, registerBashSpecificHandlers, getActiveClientsMap, connectionManager } from './connection/ipc'
 import { registerSFTPHandlers, setActiveConnectionsGetter } from './sftp'
-import { loadSavedSessionsFromDisk, saveSavedSessionsToDisk, loadIgnoredVersionsFromDisk, saveIgnoredVersionsFromDisk, loadCommandButtonGroupsFromDisk, saveCommandButtonGroupsToDisk, loadAppSettingsFromDisk, saveAppSettingsToDisk, loadViewStateFromDisk, saveViewStateToDisk, loadScheduledTasksFromDisk, saveScheduledTasksToDisk, loadProfilesFromDisk, saveProfilesToDisk } from './storage'
+import { loadSavedSessionsFromDisk, saveSavedSessionsToDisk, loadIgnoredVersionsFromDisk, saveIgnoredVersionsFromDisk, loadCommandButtonGroupsFromDisk, saveCommandButtonGroupsToDisk, loadAppSettingsFromDisk, saveAppSettingsToDisk, loadViewStateFromDisk, saveViewStateToDisk, loadScheduledTasksFromDisk, saveScheduledTasksToDisk, loadProfilesFromDisk, saveProfilesToDisk, loadSavedSessionGroupsFromDisk, saveSavedSessionGroupsToDisk } from './storage'
 import { logManager } from './logger'
 import { appLogger } from './app-logger'
 import { checkForUpdates, getCurrentVersion, downloadUpdate, quitAndInstall, cancelAutoInstall, getStatus, getIgnoredVersions, saveIgnoredVersions } from './updater'
 import { getKeyboardLockState } from './keyboard'
 import { getComputerDomain } from './domain'
 import { mainPluginHost } from './plugin-host'
-import type { SavedSession, LogConfig, ConnectionConfig, CommandButtonGroup, AppSettings, ScheduledTask, Profile } from '@shared/types'
+import type { SavedSession, LogConfig, ConnectionConfig, CommandButtonGroup, AppSettings, ScheduledTask, Profile, SavedSessionGroup } from '@shared/types'
 import type { ViewState } from './storage'
 
 async function getSystemFonts(): Promise<string[]> {
@@ -249,6 +249,15 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('storage:save-profiles', (_event, profiles: Profile[]) => {
     saveProfilesToDisk(profiles)
+  })
+
+  // 存储：会话分组
+  ipcMain.handle('storage:loadSavedSessionGroups', async () => {
+    return loadSavedSessionGroupsFromDisk()
+  })
+
+  ipcMain.handle('storage:saveSavedSessionGroups', async (_event, groups: SavedSessionGroup[]) => {
+    saveSavedSessionGroupsToDisk(groups)
   })
 
   // 插件管理
