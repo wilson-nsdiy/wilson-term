@@ -351,7 +351,7 @@ export interface UpdateStatusSnapshot {
   error?: string
   autoInstallCountdown?: number
   /** 是否由用户手动触发检查 */
-  manual?: boolean
+  manual: boolean
 }
 
 /** 定时任务定义 */
