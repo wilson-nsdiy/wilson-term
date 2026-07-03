@@ -22,7 +22,7 @@ const UpdateDialog: React.FC<UpdateDialogProps> = ({ open, onClose }) => {
       window.api.app.getUpdateStatus().then((s) => {
         setSnapshot(s)
         if (s.status === 'idle') {
-          window.api.app.checkUpdate()
+          window.api.app.checkUpdate(true)
         }
       })
     } else {
@@ -42,7 +42,7 @@ const UpdateDialog: React.FC<UpdateDialogProps> = ({ open, onClose }) => {
   }, [open, setHasNewVersion])
 
   const handleCheck = useCallback(() => {
-    window.api.app.checkUpdate()
+    window.api.app.checkUpdate(true)
   }, [])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
