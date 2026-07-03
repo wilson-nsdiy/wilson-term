@@ -21,8 +21,8 @@ function sendToRenderer(channel: string, ...args: unknown[]): void {
   }
 }
 
-function pushStatus(): void {
-  const snapshot: UpdateStatusSnapshot = {
+function buildSnapshot(): UpdateStatusSnapshot {
+  return {
     status: currentStatus,
     info: updateInfo,
     progress: downloadProgress,
@@ -30,7 +30,10 @@ function pushStatus(): void {
     autoInstallCountdown: autoInstallCountdown > 0 ? autoInstallCountdown : undefined,
     manual: isManual
   }
-  sendToRenderer('update:status-changed', snapshot)
+}
+
+function pushStatus(): void {
+  sendToRenderer('update:status-changed', buildSnapshot())
 }
 
 function setStatus(status: UpdateStatus): void {
@@ -97,14 +100,7 @@ export function initAutoUpdater(win: BrowserWindow): void {
 }
 
 export function getStatus(): UpdateStatusSnapshot {
-  return {
-    status: currentStatus,
-    info: updateInfo,
-    progress: downloadProgress,
-    error: lastError,
-    autoInstallCountdown: autoInstallCountdown > 0 ? autoInstallCountdown : undefined,
-    manual: isManual
-  }
+  return buildSnapshot()
 }
 
 export function getCurrentVersion(): string {
@@ -126,19 +122,15 @@ export async function checkForUpdates(force = false): Promise<UpdateStatusSnapsh
     if (lastCheck !== null) {
       const elapsed = Date.now() - lastCheck
       if (elapsed < AUTO_CHECK_INTERVAL_MS) {
-        currentStatus = 'not-available'
-        updateInfo = undefined
-        pushStatus()
+        // 距离上次检查不足7天，跳过自动检查
         return getStatus()
       }
     }
   }
 
-  // 记录本次检查时间
-  saveLastAutoCheckTimestamp(Date.now())
-
   try {
     await autoUpdater.checkForUpdates()
+    saveLastAutoCheckTimestamp(Date.now())
   } catch (err) {
     lastError = err instanceof Error ? err.message : '检查更新失败'
     setStatus('error')
