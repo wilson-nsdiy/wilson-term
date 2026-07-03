@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.9.9] - 2026-07-03
+
+### Added
+
+- 侧边栏新增搜索过滤功能，支持按名称、主机名、串口路径快速查找连接
+- 侧边栏支持拖拽调整宽度（150px ~ 400px）
+
+### Changed
+
+- 侧边栏头部布局优化，新建连接按钮移至标题栏右侧
+- 搜索过滤模式下禁用拖拽排序，避免索引错乱
+
 ## [v0.9.8] - 2026-07-02
 
 ### Changed
