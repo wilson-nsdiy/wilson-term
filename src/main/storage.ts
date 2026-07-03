@@ -205,3 +205,28 @@ export function saveProfilesToDisk(profiles: Profile[]): void {
   }
   writeFileSync(filePath, JSON.stringify(profiles, null, 2), 'utf-8')
 }
+
+/** 从磁盘加载上次自动检查更新的时间戳 */
+export function loadLastAutoCheckTimestamp(): number | null {
+  const filePath = getStoragePath('last-auto-check.json')
+  if (!existsSync(filePath)) {
+    return null
+  }
+  try {
+    const data = readFileSync(filePath, 'utf-8')
+    const parsed = JSON.parse(data) as { timestamp?: number }
+    return typeof parsed.timestamp === 'number' ? parsed.timestamp : null
+  } catch {
+    return null
+  }
+}
+
+/** 将上次自动检查更新的时间戳写入磁盘 */
+export function saveLastAutoCheckTimestamp(timestamp: number): void {
+  const filePath = getStoragePath('last-auto-check.json')
+  const dir = dirname(filePath)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  writeFileSync(filePath, JSON.stringify({ timestamp }), 'utf-8')
+}

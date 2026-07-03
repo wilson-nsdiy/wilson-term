@@ -135,7 +135,7 @@ const api = {
   // 应用更新
   app: {
     getVersion: () => ipcRenderer.invoke('app:get-version'),
-    checkUpdate: () => ipcRenderer.invoke('app:check-update'),
+    checkUpdate: (force?: boolean) => ipcRenderer.invoke('app:check-update', force),
     downloadUpdate: () => ipcRenderer.invoke('app:download-update'),
     installUpdate: () => ipcRenderer.invoke('app:install-update'),
     cancelAutoInstall: () => ipcRenderer.invoke('app:cancel-auto-install'),

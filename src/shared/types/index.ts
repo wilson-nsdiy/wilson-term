@@ -377,7 +377,7 @@ export interface ScheduledTask {
 /** 应用 API */
 export interface AppAPI {
   getVersion: () => Promise<string>
-  checkUpdate: () => Promise<UpdateStatusSnapshot>
+  checkUpdate: (force?: boolean) => Promise<UpdateStatusSnapshot>
   downloadUpdate: () => Promise<void>
   installUpdate: () => void
   cancelAutoInstall: () => void

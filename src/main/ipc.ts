@@ -173,8 +173,8 @@ export function registerIpcHandlers(): void {
   })
 
   // 检查更新
-  ipcMain.handle('app:check-update', () => {
-    return checkForUpdates()
+  ipcMain.handle('app:check-update', (_event, force?: boolean) => {
+    return checkForUpdates(force)
   })
 
   // 下载更新

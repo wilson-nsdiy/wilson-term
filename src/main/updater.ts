@@ -1,7 +1,10 @@
 import { autoUpdater } from 'electron-updater'
 import { BrowserWindow, app } from 'electron'
-import { loadIgnoredVersionsFromDisk, saveIgnoredVersionsToDisk } from './storage'
+import { loadIgnoredVersionsFromDisk, saveIgnoredVersionsToDisk, loadLastAutoCheckTimestamp, saveLastAutoCheckTimestamp } from './storage'
 import type { UpdateStatus, UpdateInfoSnapshot, UpdateProgressSnapshot, UpdateStatusSnapshot } from '@shared/types'
+
+/** 自动检查更新的最小间隔（7天，毫秒） */
+const AUTO_CHECK_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000
 
 let mainWindow: BrowserWindow | null = null
 let currentStatus: UpdateStatus = 'idle'
@@ -105,13 +108,32 @@ export function getCurrentVersion(): string {
   return app.getVersion()
 }
 
-export async function checkForUpdates(): Promise<UpdateStatusSnapshot> {
+export async function checkForUpdates(force = false): Promise<UpdateStatusSnapshot> {
   if (!app.isPackaged) {
     currentStatus = 'error'
     lastError = '开发模式下无法检查更新'
     pushStatus()
     return getStatus()
   }
+
+  // 非强制模式下检查间隔
+  if (!force) {
+    const lastCheck = loadLastAutoCheckTimestamp()
+    if (lastCheck !== null) {
+      const elapsed = Date.now() - lastCheck
+      if (elapsed < AUTO_CHECK_INTERVAL_MS) {
+        // 距离上次检查不足7天，跳过自动检查
+        currentStatus = 'not-available'
+        updateInfo = undefined
+        pushStatus()
+        return getStatus()
+      }
+    }
+  }
+
+  // 记录本次检查时间
+  saveLastAutoCheckTimestamp(Date.now())
+
   try {
     await autoUpdater.checkForUpdates()
   } catch (err) {
