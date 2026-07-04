@@ -1,7 +1,10 @@
 import { autoUpdater } from 'electron-updater'
 import { BrowserWindow, app } from 'electron'
-import { loadIgnoredVersionsFromDisk, saveIgnoredVersionsToDisk } from './storage'
+import { loadIgnoredVersionsFromDisk, saveIgnoredVersionsToDisk, loadLastAutoCheckTimestamp, saveLastAutoCheckTimestamp } from './storage'
 import type { UpdateStatus, UpdateInfoSnapshot, UpdateProgressSnapshot, UpdateStatusSnapshot } from '@shared/types'
+
+/** 自动检查更新的最小间隔（7天，毫秒） */
+const AUTO_CHECK_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000
 
 let mainWindow: BrowserWindow | null = null
 let currentStatus: UpdateStatus = 'idle'
@@ -10,6 +13,7 @@ let downloadProgress: UpdateProgressSnapshot | undefined
 let lastError: string | undefined
 let autoInstallTimer: ReturnType<typeof setTimeout> | null = null
 let autoInstallCountdown = 0
+let isManual = false
 
 function sendToRenderer(channel: string, ...args: unknown[]): void {
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
@@ -17,15 +21,19 @@ function sendToRenderer(channel: string, ...args: unknown[]): void {
   }
 }
 
-function pushStatus(): void {
-  const snapshot: UpdateStatusSnapshot = {
+function buildSnapshot(): UpdateStatusSnapshot {
+  return {
     status: currentStatus,
     info: updateInfo,
     progress: downloadProgress,
     error: lastError,
-    autoInstallCountdown: autoInstallCountdown > 0 ? autoInstallCountdown : undefined
+    autoInstallCountdown: autoInstallCountdown > 0 ? autoInstallCountdown : undefined,
+    manual: isManual
   }
-  sendToRenderer('update:status-changed', snapshot)
+}
+
+function pushStatus(): void {
+  sendToRenderer('update:status-changed', buildSnapshot())
 }
 
 function setStatus(status: UpdateStatus): void {
@@ -92,28 +100,37 @@ export function initAutoUpdater(win: BrowserWindow): void {
 }
 
 export function getStatus(): UpdateStatusSnapshot {
-  return {
-    status: currentStatus,
-    info: updateInfo,
-    progress: downloadProgress,
-    error: lastError,
-    autoInstallCountdown: autoInstallCountdown > 0 ? autoInstallCountdown : undefined
-  }
+  return buildSnapshot()
 }
 
 export function getCurrentVersion(): string {
   return app.getVersion()
 }
 
-export async function checkForUpdates(): Promise<UpdateStatusSnapshot> {
+export async function checkForUpdates(force = false): Promise<UpdateStatusSnapshot> {
+  isManual = force
   if (!app.isPackaged) {
     currentStatus = 'error'
     lastError = '开发模式下无法检查更新'
     pushStatus()
     return getStatus()
   }
+
+  // 非强制模式下检查间隔
+  if (!force) {
+    const lastCheck = loadLastAutoCheckTimestamp()
+    if (lastCheck !== null) {
+      const elapsed = Date.now() - lastCheck
+      if (elapsed < AUTO_CHECK_INTERVAL_MS) {
+        // 距离上次检查不足7天，跳过自动检查
+        return getStatus()
+      }
+    }
+  }
+
   try {
     await autoUpdater.checkForUpdates()
+    saveLastAutoCheckTimestamp(Date.now())
   } catch (err) {
     lastError = err instanceof Error ? err.message : '检查更新失败'
     setStatus('error')

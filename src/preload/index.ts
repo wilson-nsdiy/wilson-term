@@ -95,6 +95,8 @@ const api = {
   storage: {
     loadSavedSessions: () => ipcRenderer.invoke('storage:load-saved-sessions'),
     saveSavedSessions: (sessions: unknown) => ipcRenderer.invoke('storage:save-saved-sessions', sessions),
+    loadSavedSessionGroups: () => ipcRenderer.invoke('storage:loadSavedSessionGroups'),
+    saveSavedSessionGroups: (groups: unknown) => ipcRenderer.invoke('storage:saveSavedSessionGroups', groups),
     loadCommandButtonGroups: () => ipcRenderer.invoke('storage:load-command-button-groups'),
     saveCommandButtonGroups: (groups: unknown) => ipcRenderer.invoke('storage:save-command-button-groups', groups),
     loadAppSettings: () => ipcRenderer.invoke('storage:load-app-settings'),
@@ -135,7 +137,7 @@ const api = {
   // 应用更新
   app: {
     getVersion: () => ipcRenderer.invoke('app:get-version'),
-    checkUpdate: () => ipcRenderer.invoke('app:check-update'),
+    checkUpdate: (force?: boolean) => ipcRenderer.invoke('app:check-update', force),
     downloadUpdate: () => ipcRenderer.invoke('app:download-update'),
     installUpdate: () => ipcRenderer.invoke('app:install-update'),
     cancelAutoInstall: () => ipcRenderer.invoke('app:cancel-auto-install'),
