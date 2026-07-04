@@ -105,7 +105,29 @@ export interface SavedSession {
   overrides?: Partial<ProfileOverrides>
   /** 预设的定时任务列表（连接后自动创建到会话） */
   scheduledTasks: ScheduledTask[]
+  /** 所属分组 ID，undefined 表示未分组 */
+  groupId?: string
+  /** 在列表中的顺序 */
+  order: number
   createdAt: number
+  updatedAt: number
+}
+
+/** 保存的会话分组 */
+export interface SavedSessionGroup {
+  /** 分组唯一 ID */
+  id: string
+  /** 分组名称 */
+  name: string
+  /** 父分组 ID，undefined 表示顶级分组 */
+  parentId?: string
+  /** 分组内连接的 ID 列表（有序） */
+  sessionIds: string[]
+  /** 在同级中的顺序 */
+  order: number
+  /** 创建时间 */
+  createdAt: number
+  /** 更新时间 */
   updatedAt: number
 }
 
@@ -221,6 +243,8 @@ export interface DialogAPI {
 export interface StorageAPI {
   loadSavedSessions: () => Promise<SavedSession[]>
   saveSavedSessions: (sessions: SavedSession[]) => Promise<void>
+  loadSavedSessionGroups: () => Promise<SavedSessionGroup[]>
+  saveSavedSessionGroups: (groups: SavedSessionGroup[]) => Promise<void>
   loadCommandButtonGroups: () => Promise<CommandButtonGroup[]>
   saveCommandButtonGroups: (groups: CommandButtonGroup[]) => Promise<void>
   loadAppSettings: () => Promise<AppSettings | null>
@@ -350,6 +374,8 @@ export interface UpdateStatusSnapshot {
   progress?: UpdateProgressSnapshot
   error?: string
   autoInstallCountdown?: number
+  /** 是否由用户手动触发检查 */
+  manual: boolean
 }
 
 /** 定时任务定义 */
@@ -377,7 +403,7 @@ export interface ScheduledTask {
 /** 应用 API */
 export interface AppAPI {
   getVersion: () => Promise<string>
-  checkUpdate: () => Promise<UpdateStatusSnapshot>
+  checkUpdate: (force?: boolean) => Promise<UpdateStatusSnapshot>
   downloadUpdate: () => Promise<void>
   installUpdate: () => void
   cancelAutoInstall: () => void

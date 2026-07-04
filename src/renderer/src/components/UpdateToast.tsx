@@ -35,6 +35,7 @@ const UpdateToast: React.FC = () => {
 
   if (!snapshot || dismissed) return null
   if (updateDialogOpen) return null
+  if (snapshot.manual) return null
 
   const status = snapshot.status
   if (status !== 'available' && status !== 'downloading' && status !== 'downloaded' && status !== 'not-available' && status !== 'error') {

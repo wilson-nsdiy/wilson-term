@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
-import type { SavedSession, CommandButtonGroup, AppSettings, ScheduledTask, Profile } from '@shared/types'
+import type { SavedSession, CommandButtonGroup, AppSettings, ScheduledTask, Profile, SavedSessionGroup } from '@shared/types'
 
 /** 视图状态（需要持久化的 UI 开关） */
 export interface ViewState {
@@ -24,7 +24,7 @@ function getStoragePath(filename: string): string {
   return join(getStorageDir(), filename)
 }
 
-/** 从磁盘加载保存的会话 */
+/** 从磁盘加载保存的会话（过滤掉无 config 字段的无效记录） */
 export function loadSavedSessionsFromDisk(): SavedSession[] {
   const filePath = getStoragePath('saved-sessions.json')
   if (!existsSync(filePath)) {
@@ -32,7 +32,15 @@ export function loadSavedSessionsFromDisk(): SavedSession[] {
   }
   try {
     const data = readFileSync(filePath, 'utf-8')
-    return JSON.parse(data) as SavedSession[]
+    const sessions = JSON.parse(data) as SavedSession[]
+    // 兼容旧数据：为没有 groupId 和 order 的记录添加默认值
+    return sessions
+      .filter(s => s && s.config)
+      .map((s, index) => ({
+        ...s,
+        groupId: s.groupId,
+        order: s.order ?? index
+      }))
   } catch {
     return []
   }
@@ -203,4 +211,53 @@ export function saveProfilesToDisk(profiles: Profile[]): void {
     mkdirSync(dir, { recursive: true })
   }
   writeFileSync(filePath, JSON.stringify(profiles, null, 2), 'utf-8')
+}
+
+/** 从磁盘加载上次自动检查更新的时间戳 */
+export function loadLastAutoCheckTimestamp(): number | null {
+  const filePath = getStoragePath('last-auto-check.json')
+  if (!existsSync(filePath)) {
+    return null
+  }
+  try {
+    const data = readFileSync(filePath, 'utf-8')
+    const parsed = JSON.parse(data) as { timestamp?: number }
+    return typeof parsed.timestamp === 'number' ? parsed.timestamp : null
+  } catch {
+    return null
+  }
+}
+
+/** 将上次自动检查更新的时间戳写入磁盘 */
+export function saveLastAutoCheckTimestamp(timestamp: number): void {
+  const filePath = getStoragePath('last-auto-check.json')
+  const dir = dirname(filePath)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  writeFileSync(filePath, JSON.stringify({ timestamp }), 'utf-8')
+}
+
+/** 从磁盘加载保存的会话分组 */
+export function loadSavedSessionGroupsFromDisk(): SavedSessionGroup[] {
+  const filePath = getStoragePath('saved-session-groups.json')
+  if (!existsSync(filePath)) {
+    return []
+  }
+  try {
+    const data = readFileSync(filePath, 'utf-8')
+    return JSON.parse(data) as SavedSessionGroup[]
+  } catch {
+    return []
+  }
+}
+
+/** 将保存的会话分组写入磁盘 */
+export function saveSavedSessionGroupsToDisk(groups: SavedSessionGroup[]): void {
+  const filePath = getStoragePath('saved-session-groups.json')
+  const dir = dirname(filePath)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+  }
+  writeFileSync(filePath, JSON.stringify(groups, null, 2), 'utf-8')
 }
