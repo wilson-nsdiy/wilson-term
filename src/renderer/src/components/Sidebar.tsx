@@ -70,6 +70,10 @@ const Sidebar: React.FC = () => {
   const [dropIndex, setDropIndex] = useState<number | null>(null)
   const [dragType, setDragType] = useState<'session' | 'group' | null>(null)
   const [dragGroupId, setDragGroupId] = useState<string | null>(null)
+  const [dropGroupId, setDropGroupId] = useState<string | null>(null)
+  const [dropSessionId, setDropSessionId] = useState<string | null>(null)
+  const [dropPosition, setDropPosition] = useState<'before' | 'inside' | 'after' | null>(null)
+  const [dropToTopLevel, setDropToTopLevel] = useState(false)
   const dragStartY = useRef(0)
 
   // 侧边栏宽度调整状态
@@ -226,16 +230,12 @@ const Sidebar: React.FC = () => {
   }
 
   const handleSaveAndConnect = (config: ConnectionConfig, scheduledTasks?: ScheduledTask[], profileId?: string) => {
-    addSavedSession(config, config.name)
-    const { savedSessions: currentSessions } = useAppStore.getState()
-    const latest = currentSessions[currentSessions.length - 1]
-    if (latest) {
-      const updates: Partial<SavedSession> = {}
-      if (scheduledTasks && scheduledTasks.length > 0) updates.scheduledTasks = scheduledTasks
-      if (profileId) updates.profileId = profileId
-      if (Object.keys(updates).length > 0) {
-        useAppStore.getState().updateSavedSession(latest.id, updates)
-      }
+    const savedSessionId = addSavedSession(config, config.name)
+    const updates: Partial<SavedSession> = {}
+    if (scheduledTasks && scheduledTasks.length > 0) updates.scheduledTasks = scheduledTasks
+    if (profileId) updates.profileId = profileId
+    if (Object.keys(updates).length > 0) {
+      updateSavedSession(savedSessionId, updates)
     }
     handleConnect(config, scheduledTasks, profileId)
   }
@@ -379,10 +379,12 @@ const Sidebar: React.FC = () => {
       | { type: 'session'; session: SavedSession; depth: number }
     > = []
 
+    const keyword = searchKeyword.trim().toLowerCase()
+    const isSearching = keyword.length > 0
+
     /** 检查会话是否匹配搜索关键词 */
     const sessionMatchesSearch = (session: SavedSession): boolean => {
-      if (!searchKeyword.trim()) return true
-      const keyword = searchKeyword.toLowerCase()
+      if (!isSearching) return true
       return (
         session.name.toLowerCase().includes(keyword) ||
         (session.config.type === 'ssh' && session.config.host?.toLowerCase().includes(keyword)) ||
@@ -393,37 +395,70 @@ const Sidebar: React.FC = () => {
 
     /** 检查分组是否匹配搜索关键词 */
     const groupMatchesSearch = (group: SavedSessionGroup): boolean => {
-      if (!searchKeyword.trim()) return true
-      const keyword = searchKeyword.toLowerCase()
+      if (!isSearching) return true
       return group.name.toLowerCase().includes(keyword)
     }
 
-    /** 检查分组内是否有匹配的会话 */
-    const groupHasMatchingSessions = (group: SavedSessionGroup): boolean => {
-      if (!searchKeyword.trim()) return true
-      return group.sessionIds.some(sessionId => {
-        const session = savedSessions.find(s => s.id === sessionId)
-        return session && sessionMatchesSearch(session)
-      })
+    const childGroupsByParentId = new Map<string | undefined, SavedSessionGroup[]>()
+    for (const group of savedSessionGroups) {
+      const siblings = childGroupsByParentId.get(group.parentId) || []
+      siblings.push(group)
+      childGroupsByParentId.set(group.parentId, siblings)
+    }
+    for (const groups of childGroupsByParentId.values()) {
+      groups.sort((a, b) => a.order - b.order)
+    }
+
+    const sessionsByGroupId = new Map<string | undefined, SavedSession[]>()
+    for (const session of savedSessions) {
+      const siblings = sessionsByGroupId.get(session.groupId) || []
+      siblings.push(session)
+      sessionsByGroupId.set(session.groupId, siblings)
+    }
+    for (const sessions of sessionsByGroupId.values()) {
+      sessions.sort((a, b) => a.order - b.order)
+    }
+
+    const visibleGroupIds = new Set<string>()
+
+    const groupHasVisibleContent = (group: SavedSessionGroup): boolean => {
+      if (!isSearching) {
+        return true
+      }
+
+      if (groupMatchesSearch(group)) {
+        visibleGroupIds.add(group.id)
+        return true
+      }
+
+      const directSessions = sessionsByGroupId.get(group.id) || []
+      if (directSessions.some(sessionMatchesSearch)) {
+        visibleGroupIds.add(group.id)
+        return true
+      }
+
+      const childGroups = childGroupsByParentId.get(group.id) || []
+      if (childGroups.some(groupHasVisibleContent)) {
+        visibleGroupIds.add(group.id)
+        return true
+      }
+
+      return false
     }
 
     /** 递归添加分组及其子项 */
     const addGroupAndChildren = (parentId: string | undefined, depth: number) => {
-      const groups = savedSessionGroups
-        .filter(g => g.parentId === parentId)
-        .sort((a, b) => a.order - b.order)
+      const groups = childGroupsByParentId.get(parentId) || []
 
       for (const group of groups) {
-        const shouldShow = !searchKeyword.trim() || groupMatchesSearch(group) || groupHasMatchingSessions(group)
+        const shouldShow = !isSearching || visibleGroupIds.has(group.id) || groupHasVisibleContent(group)
 
         if (shouldShow) {
           items.push({ type: 'group', group, depth })
 
           // 搜索模式下强制展开所有分组
-          if (!collapsedSessionGroupIds.has(group.id) || searchKeyword.trim()) {
-            const sessions = savedSessions
-              .filter(s => s.groupId === group.id && sessionMatchesSearch(s))
-              .sort((a, b) => a.order - b.order)
+          if (!collapsedSessionGroupIds.has(group.id) || isSearching) {
+            const sessions = (sessionsByGroupId.get(group.id) || []).filter(session => !isSearching || sessionMatchesSearch(session))
 
             for (const session of sessions) {
               items.push({ type: 'session', session, depth: depth + 1 })
@@ -440,9 +475,7 @@ const Sidebar: React.FC = () => {
     addGroupAndChildren(undefined, 0)
 
     // 添加未分组连接
-    const ungroupedSessions = savedSessions
-      .filter(s => !s.groupId && sessionMatchesSearch(s))
-      .sort((a, b) => a.order - b.order)
+    const ungroupedSessions = (sessionsByGroupId.get(undefined) || []).filter(session => !isSearching || sessionMatchesSearch(session))
 
     for (const session of ungroupedSessions) {
       items.push({ type: 'session', session, depth: 0 })
@@ -495,6 +528,31 @@ const Sidebar: React.FC = () => {
     updateSavedSession(sessionId, { groupId: targetGroupId })
   }, [])
 
+  /** 移动会话到顶层（脱离分组） */
+  const moveSessionToTopLevel = useCallback((sessionId: string) => {
+    const { savedSessions, savedSessionGroups, updateSavedSession, updateSessionGroup } = useAppStore.getState()
+    const session = savedSessions.find(s => s.id === sessionId)
+    if (!session) return
+
+    if (session.groupId) {
+      const sourceGroup = savedSessionGroups.find(g => g.id === session.groupId)
+      if (sourceGroup) {
+        updateSessionGroup(sourceGroup.id, {
+          sessionIds: sourceGroup.sessionIds.filter(id => id !== sessionId)
+        })
+      }
+    }
+
+    const ungroupedSessions = savedSessions
+      .filter(s => !s.groupId && s.id !== sessionId)
+      .sort((a, b) => a.order - b.order)
+
+    updateSavedSession(sessionId, {
+      groupId: undefined,
+      order: ungroupedSessions.length
+    })
+  }, [])
+
   /** 在列表中移动会话（同分组内排序或跨分组移动） */
   const moveSessionInList = useCallback((sessionId: string, targetSessionId: string) => {
     const { savedSessions, savedSessionGroups, updateSavedSession, updateSessionGroup } = useAppStore.getState()
@@ -516,6 +574,21 @@ const Sidebar: React.FC = () => {
           newSessionIds.splice(fromIdx, 1)
           newSessionIds.splice(toIdx, 0, sessionId)
           updateSessionGroup(group.id, { sessionIds: newSessionIds })
+        }
+      } else if (!session.groupId) {
+        // 未分组会话排序：按 order 重排
+        const ungroupedSessions = savedSessions
+          .filter(s => !s.groupId)
+          .sort((a, b) => a.order - b.order)
+        const fromIdx = ungroupedSessions.findIndex(s => s.id === sessionId)
+        const toIdx = ungroupedSessions.findIndex(s => s.id === targetSessionId)
+        if (fromIdx !== -1 && toIdx !== -1) {
+          const reordered = [...ungroupedSessions]
+          const [moved] = reordered.splice(fromIdx, 1)
+          reordered.splice(toIdx, 0, moved)
+          reordered.forEach((s, i) => {
+            if (s.order !== i) updateSavedSession(s.id, { order: i })
+          })
         }
       }
     } else {
@@ -612,12 +685,8 @@ const Sidebar: React.FC = () => {
                 {items.map((item, index) => {
                   if (item.type === 'group') {
                     return (
-                      <div key={`group-${item.group.id}`}>
                         <div
-                          style={{ paddingLeft: `${item.depth * 16 + 8}px` }}
-                          className={`flex items-center gap-1 px-2 py-1.5 cursor-pointer hover:bg-gray-700 rounded text-sm text-gray-300 select-none ${
-                            dragType === 'group' && dragGroupId === item.group.id ? 'opacity-50' : ''
-                          } ${dropIndex === index && dragType === 'group' && dragGroupId !== item.group.id ? 'border-t-2 border-blue-400' : ''}`}
+                          key={`group-${item.group.id}`}
                           draggable={!searchKeyword.trim()}
                           onDragStart={(e) => {
                             setDragIndex(index)
@@ -633,20 +702,51 @@ const Sidebar: React.FC = () => {
                             if (dragType === 'group' && item.type === 'group') {
                               if (dragGroupId !== item.group.id && !isDescendant(item.group.id, dragGroupId || '')) {
                                 setDropIndex(index)
+                                setDropGroupId(item.group.id)
+                                setDropSessionId(null)
+                                // 判断鼠标位置：上方1/4排序，中间2/4嵌套，下方1/4排序
+                                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                                const y = e.clientY - rect.top
+                                const height = rect.height
+                                if (y < height * 0.25) {
+                                  setDropPosition('before')
+                                } else if (y > height * 0.75) {
+                                  setDropPosition('after')
+                                } else {
+                                  setDropPosition('inside')
+                                }
                               }
+                            } else if (dragType === 'session' && item.type === 'group') {
+                              setDropIndex(index)
+                              setDropGroupId(item.group.id)
+                              setDropSessionId(null)
+                              setDropPosition('inside')
                             }
                           }}
                           onDragEnd={() => {
-                            if (dragType === 'group' && dragIndex !== null && dropIndex !== null && dragIndex !== dropIndex) {
-                              const items = buildSidebarItems()
-                              const dragItem = items[dragIndex]
-                              const dropItem = items[dropIndex]
-                              if (dragItem?.type === 'group' && dropItem?.type === 'group') {
-                                const groupItems = items.filter(i => i.type === 'group')
-                                const fromIdx = groupItems.findIndex(i => i.type === 'group' && i.group.id === dragItem.group.id)
-                                const toIdx = groupItems.findIndex(i => i.type === 'group' && i.group.id === dropItem.group.id)
-                                if (fromIdx !== -1 && toIdx !== -1) {
-                                  moveSessionGroup(fromIdx, toIdx, dragItem.group.parentId)
+                            if (dragType === 'group' && dragGroupId && dropGroupId && dragGroupId !== dropGroupId) {
+                              const dragItem = savedSessionGroups.find(group => group.id === dragGroupId)
+                              const dropItem = savedSessionGroups.find(group => group.id === dropGroupId)
+                              if (dragItem && dropItem) {
+                                // 判断是嵌套还是排序
+                                if (dropPosition === 'inside') {
+                                  const targetDepth = getGroupDepth(dropItem.id)
+                                  if (targetDepth < 3) {
+                                    const targetSiblingCount = savedSessionGroups.filter(
+                                      g => g.parentId === dropItem.id && g.id !== dragItem.id
+                                    ).length
+                                    moveSessionGroup(dragItem.id, dropItem.id, targetSiblingCount)
+                                  }
+                                } else {
+                                  const targetParentId = dropItem.parentId
+                                  const siblingGroups = savedSessionGroups
+                                    .filter(g => g.parentId === targetParentId)
+                                    .sort((a, b) => a.order - b.order)
+                                  const targetSiblingIndex = siblingGroups.findIndex(g => g.id === dropItem.id)
+                                  if (targetSiblingIndex !== -1) {
+                                    const insertIndex = dropPosition === 'after' ? targetSiblingIndex + 1 : targetSiblingIndex
+                                    moveSessionGroup(dragItem.id, targetParentId, insertIndex)
+                                  }
                                 }
                               }
                             }
@@ -654,17 +754,31 @@ const Sidebar: React.FC = () => {
                             setDropIndex(null)
                             setDragType(null)
                             setDragGroupId(null)
+                            setDropGroupId(null)
+                            setDropSessionId(null)
+                            setDropPosition(null)
                           }}
                           onClick={() => toggleSessionGroupCollapsed(item.group.id)}
                           onContextMenu={(e) => handleGroupContextMenu(e, item.group)}
+                          style={{ paddingLeft: `${item.depth * 16 + 8}px` }}
+                          className={`flex items-center gap-1 px-2 py-1.5 cursor-pointer hover:bg-gray-700 rounded text-sm text-gray-300 select-none ${
+                            dragType === 'group' && dragGroupId === item.group.id ? 'opacity-50' : ''
+                          } ${
+                            dropIndex === index && ((dragType === 'group' && dragGroupId !== item.group.id) || dragType === 'session')
+                              ? dropPosition === 'before'
+                                ? 'border-t-2 border-blue-400'
+                                : dropPosition === 'after'
+                                  ? 'border-b-2 border-blue-400'
+                                  : 'bg-blue-600/30'
+                              : ''
+                          }`}
                         >
-                          <span className="text-xs">
+                          <span className="text-[10px] font-mono font-bold px-1 rounded text-yellow-400 bg-yellow-400/10">
                             {collapsedSessionGroupIds.has(item.group.id) ? '▶' : '▼'}
                           </span>
                           <span className="flex-1 truncate font-medium">{item.group.name}</span>
                           <span className="text-xs text-gray-500">[{item.group.sessionIds.length}]</span>
                         </div>
-                      </div>
                     )
                   } else {
                     const saved = item.session
@@ -686,22 +800,27 @@ const Sidebar: React.FC = () => {
                           if (dragType === 'session' && item.type === 'session') {
                             if (dragIndex !== null && dragIndex !== index) {
                               setDropIndex(index)
+                              setDropSessionId(saved.id)
+                              setDropGroupId(null)
                             }
                           } else if (dragType === 'session' && item.type === 'group') {
                             setDropIndex(index)
+                            setDropGroupId(item.group.id)
+                            setDropSessionId(null)
                           }
                         }}
                         onDragEnd={() => {
-                          if (dragIndex !== null && dropIndex !== null && dragIndex !== dropIndex) {
+                          if (dragType === 'session' && dragIndex !== null) {
                             const items = buildSidebarItems()
                             const dragItem = items[dragIndex]
-                            const dropItem = items[dropIndex]
 
-                            if (dragType === 'session' && dragItem?.type === 'session') {
-                              if (dropItem?.type === 'group') {
-                                moveSessionToGroup(dragItem.session.id, dropItem.group.id)
-                              } else if (dropItem?.type === 'session') {
-                                moveSessionInList(dragItem.session.id, dropItem.session.id)
+                            if (dragItem?.type === 'session') {
+                              if (dropToTopLevel) {
+                                moveSessionToTopLevel(dragItem.session.id)
+                              } else if (dropGroupId) {
+                                moveSessionToGroup(dragItem.session.id, dropGroupId)
+                              } else if (dropSessionId && dropSessionId !== dragItem.session.id) {
+                                moveSessionInList(dragItem.session.id, dropSessionId)
                               }
                             }
                           }
@@ -709,6 +828,10 @@ const Sidebar: React.FC = () => {
                           setDropIndex(null)
                           setDragType(null)
                           setDragGroupId(null)
+                          setDropGroupId(null)
+                          setDropSessionId(null)
+                          setDropPosition(null)
+                          setDropToTopLevel(false)
                         }}
                         onDoubleClick={() => handleSavedSessionConnect(saved)}
                         onContextMenu={(e) => handleContextMenu(e, saved)}
@@ -733,6 +856,26 @@ const Sidebar: React.FC = () => {
                     )
                   }
                 })}
+                {dragType === 'session' && (
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      e.dataTransfer.dropEffect = 'move'
+                      setDropToTopLevel(true)
+                      setDropIndex(null)
+                      setDropGroupId(null)
+                      setDropSessionId(null)
+                    }}
+                    onDragLeave={() => setDropToTopLevel(false)}
+                    className={`mt-2 py-2 text-center text-xs rounded transition-colors cursor-default ${
+                      dropToTopLevel
+                        ? 'border-2 border-dashed border-blue-400 bg-blue-400/10 text-blue-400'
+                        : 'border border-dashed border-gray-600 text-gray-500'
+                    }`}
+                  >
+                    拖放至此移至顶层
+                  </div>
+                )}
               </div>
             )
           })()}

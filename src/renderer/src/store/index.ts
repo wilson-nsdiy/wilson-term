@@ -79,7 +79,7 @@ interface AppState {
 
   // Actions - 保存的会话模板
   addSavedSession: (config: ConnectionConfig, name?: string, groupId?: string) => string
-  updateSavedSession: (id: string, updates: Partial<Pick<SavedSession, 'name' | 'config' | 'scheduledTasks' | 'profileId'>>) => void
+  updateSavedSession: (id: string, updates: Partial<Pick<SavedSession, 'name' | 'config' | 'scheduledTasks' | 'profileId' | 'groupId' | 'order'>>) => void
   removeSavedSession: (id: string) => void
   /** 拖拽移动保存的会话顺序 */
   moveSavedSession: (fromIndex: number, toIndex: number) => void
@@ -91,7 +91,7 @@ interface AppState {
   addSessionGroup: (name: string, parentId?: string) => string
   updateSessionGroup: (id: string, updates: Partial<Pick<SavedSessionGroup, 'name' | 'parentId' | 'sessionIds' | 'order'>>) => void
   removeSessionGroup: (id: string) => void
-  moveSessionGroup: (fromIndex: number, toIndex: number, parentId?: string) => void
+  moveSessionGroup: (groupId: string, targetParentId: string | undefined, targetIndex: number) => void
   toggleSessionGroupCollapsed: (id: string) => void
   loadSessionGroups: () => Promise<void>
   persistSessionGroups: () => Promise<void>
@@ -355,9 +355,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   removeSavedSession: (id) => {
     set((state) => ({
-      savedSessions: state.savedSessions.filter((s) => s.id !== id)
+      savedSessions: state.savedSessions.filter((s) => s.id !== id),
+      savedSessionGroups: state.savedSessionGroups.map((group) =>
+        group.sessionIds.includes(id)
+          ? { ...group, sessionIds: group.sessionIds.filter((sessionId) => sessionId !== id), updatedAt: Date.now() }
+          : group
+      )
     }))
     get().persistSavedSessions()
+    get().persistSessionGroups()
   },
 
   moveSavedSession: (fromIndex, toIndex) => {
@@ -417,14 +423,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     const now = Date.now()
     const { savedSessionGroups } = get()
 
+    // 防护：parentId 不能是自身 ID
+    const validParentId = parentId && parentId !== id ? parentId : undefined
+
     // 计算同级最大 order
-    const siblings = savedSessionGroups.filter(g => g.parentId === parentId)
+    const siblings = savedSessionGroups.filter(g => g.parentId === validParentId)
     const maxOrder = siblings.reduce((max, g) => Math.max(max, g.order), -1)
 
     const group: SavedSessionGroup = {
       id,
       name,
-      parentId,
+      parentId: validParentId,
       sessionIds: [],
       order: maxOrder + 1,
       createdAt: now,
@@ -439,6 +448,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   updateSessionGroup: (id, updates) => {
+    // 防护：parentId 不能指向自身
+    if (updates.parentId === id) {
+      const { parentId: _, ...safeUpdates } = updates
+      updates = safeUpdates as typeof updates
+    }
     set((state) => ({
       savedSessionGroups: state.savedSessionGroups.map(g =>
         g.id === id ? { ...g, ...updates, updatedAt: Date.now() } : g
@@ -474,26 +488,66 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().persistSavedSessions()
   },
 
-  moveSessionGroup: (fromIndex, toIndex, parentId) => {
+  moveSessionGroup: (groupId, targetParentId, targetIndex) => {
     set((state) => {
-      const groups = [...state.savedSessionGroups]
-
-      // 获取指定 parentId 下的分组并排序
-      const siblings = groups.filter(g => g.parentId === parentId).sort((a, b) => a.order - b.order)
-      const otherGroups = groups.filter(g => g.parentId !== parentId)
-
-      if (fromIndex < 0 || fromIndex >= siblings.length || toIndex < 0 || toIndex >= siblings.length) {
+      const movingGroup = state.savedSessionGroups.find(g => g.id === groupId)
+      if (!movingGroup) {
         return state
       }
 
-      const [moved] = siblings.splice(fromIndex, 1)
-      siblings.splice(toIndex, 0, moved)
+      // 防护：不能将分组设为自身的子节点
+      const safeTargetParentId = targetParentId === groupId ? undefined : targetParentId
 
-      // 更新 order
-      const updatedSiblings = siblings.map((g, i) => ({ ...g, order: i }))
+      const normalizeParentId = (parentId: string | undefined) => parentId ?? null
+
+      const now = Date.now()
+      const sourceParentId = movingGroup.parentId
+      const normalizedSourceParentId = normalizeParentId(sourceParentId)
+      const normalizedTargetParentId = normalizeParentId(safeTargetParentId)
+      const sameParent = normalizedSourceParentId === normalizedTargetParentId
+
+      const sourceSiblings = state.savedSessionGroups
+        .filter(g => normalizeParentId(g.parentId) === normalizedSourceParentId)
+        .sort((a, b) => a.order - b.order)
+      const fromIndex = sourceSiblings.findIndex(g => g.id === groupId)
+      if (fromIndex === -1) {
+        return state
+      }
+
+      const sourceWithoutMoving = sourceSiblings.filter(g => g.id !== groupId)
+      const targetSiblings = sameParent
+        ? [...sourceWithoutMoving]
+        : state.savedSessionGroups
+            .filter(g => normalizeParentId(g.parentId) === normalizedTargetParentId && g.id !== groupId)
+            .sort((a, b) => a.order - b.order)
+
+      const adjustedTargetIndex = sameParent && fromIndex < targetIndex ? targetIndex - 1 : targetIndex
+      const insertIndex = Math.max(0, Math.min(adjustedTargetIndex, targetSiblings.length))
+
+      const movedGroup: SavedSessionGroup = {
+        ...movingGroup,
+        ...(safeTargetParentId === undefined ? {} : { parentId: safeTargetParentId }),
+        ...(safeTargetParentId === undefined && movingGroup.parentId !== undefined ? { parentId: undefined } : {}),
+        updatedAt: now
+      }
+
+      targetSiblings.splice(insertIndex, 0, movedGroup)
+
+      const updatedSourceSiblings = sameParent
+        ? []
+        : sourceWithoutMoving.map((group, index) => ({ ...group, order: index, updatedAt: now }))
+      const updatedTargetSiblings = targetSiblings.map((group, index) => ({ ...group, order: index, updatedAt: now }))
+
+      const unaffectedGroups = state.savedSessionGroups.filter(g => {
+        if (g.id === groupId) return false
+        const normalizedParentId = normalizeParentId(g.parentId)
+        if (normalizedParentId === normalizedSourceParentId) return false
+        if (normalizedParentId === normalizedTargetParentId) return false
+        return true
+      })
 
       return {
-        savedSessionGroups: [...otherGroups, ...updatedSiblings]
+        savedSessionGroups: [...unaffectedGroups, ...updatedSourceSiblings, ...updatedTargetSiblings]
       }
     })
     get().persistSessionGroups()
@@ -514,7 +568,47 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadSessionGroups: async () => {
     try {
       const groups = await window.api.storage.loadSavedSessionGroups()
-      set({ savedSessionGroups: groups })
+      // 第一步：移除自引用 parentId 和指向不存在分组的 parentId
+      const groupIds = new Set(groups.map(g => g.id))
+      let sanitized = groups.map(g => {
+        if (g.parentId) {
+          if (g.parentId === g.id || !groupIds.has(g.parentId)) {
+            const { parentId: _, ...rest } = g
+            return rest
+          }
+        }
+        return g
+      })
+
+      // 第二步：检测并打破循环引用
+      // 从所有根节点（parentId 为 undefined）出发 DFS，标记可达节点
+      const visited = new Set<string>()
+      const stack: string[] = sanitized
+        .filter(g => !g.parentId)
+        .map(g => g.id)
+
+      while (stack.length > 0) {
+        const currentId = stack.pop()!
+        if (visited.has(currentId)) continue
+        visited.add(currentId)
+        const children = sanitized.filter(g => g.parentId === currentId)
+        for (const child of children) {
+          if (!visited.has(child.id)) {
+            stack.push(child.id)
+          }
+        }
+      }
+
+      // 任何未被访问到的分组都处于循环中，移除其 parentId 使其成为顶级分组
+      sanitized = sanitized.map(g => {
+        if (g.parentId && !visited.has(g.id)) {
+          const { parentId: _, ...rest } = g
+          return rest
+        }
+        return g
+      })
+
+      set({ savedSessionGroups: sanitized })
     } catch (err) {
       console.error('加载保存的会话分组失败:', err)
     }
