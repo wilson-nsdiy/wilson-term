@@ -313,7 +313,7 @@ const Sidebar: React.FC = () => {
   }, [savedSessionGroups])
 
   /** 分组右键菜单操作 */
-  const handleGroupContextMenuAction = (action: 'rename' | 'delete' | 'addSubgroup' | 'addGroup') => {
+  const handleGroupContextMenuAction = (action: 'rename' | 'delete') => {
     const { group } = contextMenu
     if (!group) return
 
@@ -339,34 +339,6 @@ const Sidebar: React.FC = () => {
         if (confirm(`确定删除分组 "${group.name}" 吗？\n分组内的连接将移到未分组。`)) {
           removeSessionGroup(group.id)
         }
-        break
-      }
-      case 'addSubgroup': {
-        showInputDialog(
-          '新建子分组',
-          '请输入子分组名称',
-          '',
-          '子分组名称',
-          (name) => {
-            if (name && name.trim()) {
-              addSessionGroup(name.trim(), group.id)
-            }
-          }
-        )
-        break
-      }
-      case 'addGroup': {
-        showInputDialog(
-          '新建同级分组',
-          '请输入分组名称',
-          '',
-          '分组名称',
-          (name) => {
-            if (name && name.trim()) {
-              addSessionGroup(name.trim(), group.parentId)
-            }
-          }
-        )
         break
       }
     }
@@ -902,20 +874,6 @@ const Sidebar: React.FC = () => {
                 className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 transition-colors"
               >
                 ✏️ 重命名
-              </button>
-              {getGroupDepth(contextMenu.group.id) < 3 && (
-                <button
-                  onClick={() => handleGroupContextMenuAction('addSubgroup')}
-                  className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 transition-colors"
-                >
-                  ➕ 新建子分组
-                </button>
-              )}
-              <button
-                onClick={() => handleGroupContextMenuAction('addGroup')}
-                className="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-700 transition-colors"
-              >
-                ➕ 新建同级分组
               </button>
               <div className="border-t border-gray-600 my-1" />
               <button

@@ -25,11 +25,15 @@ const InputDialog: React.FC<InputDialogProps> = ({
   useEffect(() => {
     if (open) {
       setValue(defaultValue)
-      // 自动聚焦并选中文本
-      setTimeout(() => {
+      // 先让当前焦点元素失焦（特别是 xterm 终端隐藏的 textarea），防止键盘事件被终端捕获
+      const activeEl = document.activeElement as HTMLElement | null
+      if (activeEl && activeEl !== document.body) {
+        activeEl.blur()
+      }
+      requestAnimationFrame(() => {
         inputRef.current?.focus()
         inputRef.current?.select()
-      }, 100)
+      })
     }
   }, [open, defaultValue])
 

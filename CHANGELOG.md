@@ -13,11 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 侧边栏新增搜索过滤功能，支持按名称、主机名、串口路径快速查找连接
 - 侧边栏支持拖拽调整宽度（150px ~ 400px）
+- 实现侧边栏会话分组功能，支持目录分组管理
+- 侧边栏新建按钮改为下拉菜单，支持新建目录和新建连接
 
 ### Changed
 
 - 侧边栏头部布局优化，新建连接按钮移至标题栏右侧
 - 搜索过滤模式下禁用拖拽排序，避免索引错乱
+- 限制自动更新检查频率为每7天一次，手动检查始终执行
+- 使用自定义 InputDialog 替代 prompt()，修复 Electron 中 prompt 不显示的问题
+- 统一同级分组和连接的左侧缩进宽度
+- 减小顶级缩进，统一目录和连接的左侧间距
+- 优化侧边栏拖拽排序和分组管理
+
+### Fixed
+
+- 过滤缺少 config 字段的无效保存会话，防止运行时异常
+- 手动检查更新时不再弹出 toast 通知
+- deduplicate updater status snapshot and only save check timestamp on success
 
 ## [v0.9.8] - 2026-07-02
 
