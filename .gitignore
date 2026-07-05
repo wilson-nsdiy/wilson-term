@@ -48,3 +48,5 @@ plugins/*/dist/
 plugins/*/node_modules/
 plugins/*/*.zip
 
+# AI
+.codegraph/

@@ -31,7 +31,7 @@ const AboutDialog: React.FC<AboutDialogProps> = ({ open, onClose }) => {
             <img src={logo} alt="Logo" className="w-full h-full object-cover" />
           </div>
           <h3 className="text-xl font-semibold text-[#cdd6f4]">Wilson Term</h3>
-          <p className="text-sm text-[#a6adc8] mt-1">V{__APP_VERSION__}</p>
+          <p className="text-sm text-[#a6adc8] mt-1">v{__APP_VERSION__}</p>
         </div>
 
         {/* 信息区域 */}
