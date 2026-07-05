@@ -129,6 +129,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Set prerelease version in package.json
+        if: env.IS_PRERELEASE == 'true'
+        run: node scripts/set-prerelease-version.js
+        env:
+          TAG: ${{ github.ref_name }}
+
       - name: Build & Package
         run: npx electron-vite build && npx electron-builder --publish never
 

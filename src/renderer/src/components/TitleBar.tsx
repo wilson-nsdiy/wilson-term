@@ -4,6 +4,14 @@ import MenuBar from './MenuBar'
 import icon16 from '../assets/icon-16.png'
 import icon32 from '../assets/icon-32.png'
 
+const version = __APP_VERSION__
+const isPreRelease = version.includes('-')
+const baseVersion = version.split('-')[0]
+const preRelease = version.split('-')[1] ?? ''
+const titleText = isPreRelease
+  ? `Wilson Term v${baseVersion} ${preRelease}`
+  : `Wilson Term v${version}`
+
 const TitleBar: React.FC = () => {
   const toggleSidebar = useAppStore((state) => state.toggleSidebar)
 
@@ -49,7 +57,7 @@ const TitleBar: React.FC = () => {
 
       {/* 标题 */}
       <div className="absolute left-1/2 -translate-x-1/2 text-sm font-medium text-gray-300 pointer-events-none">
-        Wilson Term V{__APP_VERSION__}
+        {titleText}
       </div>
 
       {/* 窗口控制按钮 */}
