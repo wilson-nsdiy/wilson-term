@@ -62,3 +62,9 @@ body,
 .xterm .xterm-viewport {
   background-color: var(--term-bg, #1e1e2e);
 }
+
+/* IME composition 文本约束在光标到右边缘之间，防止向右溢出导致页面左移（对齐 xterm 7.0 #5747） */
+.xterm .composition-view {
+  overflow: hidden;
+  direction: rtl;
+}
