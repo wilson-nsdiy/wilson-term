@@ -9,6 +9,7 @@ import { resolveLogConfig } from '../utils/logConfig'
 import { resolveSettings } from '../utils/settingsResolver'
 import { buildFontFamily } from '../utils/font'
 import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseModeEnabled } from '../utils/pasteFilter'
+import { applyImePatches, removeImePatches } from '../utils/imePatch'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
 import TerminalStatusBar from './TerminalStatusBar'
@@ -202,6 +203,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     xterm.open(terminalRef.current)
     fitAddon.fit()
+    applyImePatches(xterm)
 
     if (resolved.backgroundImage) {
       xterm.element?.classList.add('xterm-bg-image')
@@ -300,16 +302,37 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     }
     window.addEventListener('resize', handleResize)
 
-    // 输入法 composition 结束时重新适配尺寸
+    // composition 光标靠右溢出修复（对齐 xterm 7.0 官方 #5747）：overflow/direction:rtl 在 CSS，MO 补动态 maxWidth
     const xtermElement = xterm.element
-    const handleCompositionEnd = () => {
-      fitAddon.fit()
+    const compositionView = xtermElement?.querySelector<HTMLElement>('.composition-view')
+
+    const constrainComposition = () => {
+      if (!xtermElement || !compositionView) return
+      const cs = getComputedStyle(xtermElement)
+      const availWidth =
+        xtermElement.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+      if (availWidth <= 0) return
+      const currentLeft = parseFloat(compositionView.style.left) || 0
+      const maxWidth = availWidth - currentLeft
+      if (maxWidth > 0) {
+        compositionView.style.maxWidth = `${maxWidth}px`
+      }
     }
+
+    // xterm 在 compositionupdate 时同步定位并 setTimeout 递归一次；MO 在每次重定位后（绘制前）补设 maxWidth
+    const compositionMo = compositionView
+      ? new MutationObserver(() => constrainComposition())
+      : null
+    compositionMo?.observe(compositionView, { attributes: true, attributeFilter: ['style'] })
+
+    const handleCompositionEnd = () => fitAddon.fit()
     xtermElement?.addEventListener('compositionend', handleCompositionEnd)
 
     return () => {
       window.removeEventListener('resize', handleResize)
       xtermElement?.removeEventListener('compositionend', handleCompositionEnd)
+      compositionMo?.disconnect()
+      removeImePatches(xterm)
       terminalRef.current?.removeEventListener('contextmenu', handleContextMenu)
       selectionChangeDisposable.dispose()
       searchResultDisposable.dispose()
@@ -635,7 +658,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       />
       <div
         ref={terminalRef}
-        className="absolute inset-0"
+        className="absolute inset-0 overflow-hidden"
         style={{
           bottom: (commandInputVisible ? 28 : 0) + (buttonBarVisible ? 28 : 0) + (statusBarVisible ? 24 : 0) + 'px'
         }}

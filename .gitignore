@@ -50,3 +50,4 @@ plugins/*/*.zip
 
 # AI
 .codegraph/
+.qoder/
