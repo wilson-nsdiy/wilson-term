@@ -347,7 +347,7 @@ const Sidebar: React.FC = () => {
   /** 构建侧边栏列表项（分组和未分组连接混合排序，支持搜索过滤） */
   const buildSidebarItems = useCallback(() => {
     const items: Array<
-      | { type: 'group'; group: SavedSessionGroup; depth: number }
+      | { type: 'group'; group: SavedSessionGroup; depth: number; totalSessionCount: number }
       | { type: 'session'; session: SavedSession; depth: number }
     > = []
 
@@ -418,6 +418,17 @@ const Sidebar: React.FC = () => {
       return false
     }
 
+    /** 递归计算分组及其所有子分组中匹配搜索的会话总数 */
+    const countGroupSessions = (groupId: string): number => {
+      const directSessions = (sessionsByGroupId.get(groupId) || []).filter(session => !isSearching || sessionMatchesSearch(session))
+      let count = directSessions.length
+      const childGroups = childGroupsByParentId.get(groupId) || []
+      for (const child of childGroups) {
+        count += countGroupSessions(child.id)
+      }
+      return count
+    }
+
     /** 递归添加分组及其子项 */
     const addGroupAndChildren = (parentId: string | undefined, depth: number) => {
       const groups = childGroupsByParentId.get(parentId) || []
@@ -426,7 +437,7 @@ const Sidebar: React.FC = () => {
         const shouldShow = !isSearching || visibleGroupIds.has(group.id) || groupHasVisibleContent(group)
 
         if (shouldShow) {
-          items.push({ type: 'group', group, depth })
+          items.push({ type: 'group', group, depth, totalSessionCount: countGroupSessions(group.id) })
 
           // 搜索模式下强制展开所有分组
           if (!collapsedSessionGroupIds.has(group.id) || isSearching) {
@@ -749,7 +760,7 @@ const Sidebar: React.FC = () => {
                             {collapsedSessionGroupIds.has(item.group.id) ? '▶' : '▼'}
                           </span>
                           <span className="flex-1 truncate font-medium">{item.group.name}</span>
-                          <span className="text-xs text-gray-500">[{item.group.sessionIds.length}]</span>
+                          <span className="text-xs text-gray-500">[{item.totalSessionCount}]</span>
                         </div>
                     )
                   } else {
