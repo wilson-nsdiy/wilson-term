@@ -19,9 +19,23 @@ interface PatchState {
 
 const patchStates = new WeakMap<AnyTerminal, PatchState>()
 
+// 每条原因只告警一次，避免多终端实例刷屏
+const warned = new Set<string>()
+function warnPatchSkipped(patch: string, reason: string): void {
+  const key = `${patch}:${reason}`
+  if (warned.has(key)) return
+  warned.add(key)
+  console.warn(
+    `[imePatch] ${patch} 已跳过 — ${reason}。xterm 内部结构可能已变更，对应 IME bug 可能复发，请核对 xterm 版本。`
+  )
+}
+
 export function applyImePatches(xterm: AnyTerminal): void {
   const core = xterm?._core
-  if (!core) return
+  if (!core) {
+    warnPatchSkipped('all', 'xterm._core 不可用')
+    return
+  }
 
   const state: PatchState = {
     compositionendListener: null,
@@ -63,7 +77,10 @@ export function removeImePatches(xterm: AnyTerminal): void {
  */
 function patchTextareaResidue(core: AnyTerminal, state: PatchState): void {
   const textarea = core.textarea as HTMLTextAreaElement | undefined
-  if (!textarea) return
+  if (!textarea) {
+    warnPatchSkipped('#6012', 'core.textarea 不可用')
+    return
+  }
 
   state.compositionendListener = () => {
     const opts = core.optionsService?.rawOptions
@@ -88,7 +105,10 @@ function patchTextareaResidue(core: AnyTerminal, state: PatchState): void {
  */
 function patchInputEventKeyCode229(core: AnyTerminal, state: PatchState): void {
   const original = core._inputEvent?.bind(core)
-  if (!original) return
+  if (!original || typeof core.coreService?.triggerDataEvent !== 'function') {
+    warnPatchSkipped('#5887', 'core._inputEvent 或 coreService.triggerDataEvent 不可用')
+    return
+  }
   state.originalInputEvent = core._inputEvent
 
   core._inputEvent = function (ev: InputEvent): boolean {
@@ -122,10 +142,12 @@ function patchInputEventKeyCode229(core: AnyTerminal, state: PatchState): void {
  */
 function patchFinalizeCompositionDedup(core: AnyTerminal, state: PatchState): void {
   const helper = core._compositionHelper
-  if (!helper) return
+  if (!helper || typeof helper._finalizeComposition !== 'function' || !helper._compositionView) {
+    warnPatchSkipped('#5778', '_compositionHelper/_finalizeComposition/_compositionView 不可用')
+    return
+  }
 
-  const original = helper._finalizeComposition?.bind(helper)
-  if (!original) return
+  const original = helper._finalizeComposition.bind(helper)
   state.originalFinalizeComposition = helper._finalizeComposition
 
   helper._finalizeComposition = function (waitForPropagation: boolean): void {
@@ -134,6 +156,7 @@ function patchFinalizeCompositionDedup(core: AnyTerminal, state: PatchState): vo
       if (state.finalizeDedup.timer) {
         clearTimeout(state.finalizeDedup.timer)
       }
+      // 100ms：需覆盖 keydown 同步触发的 false 调用到浏览器 compositionend 异步派发 true 调用之间的 task 调度延迟；compositionend 是独立 task 故需小缓冲，取 100ms 留调度抖动余量且短到不会误吞下一次新组合
       state.finalizeDedup.timer = setTimeout(() => {
         state.finalizeDedup.active = false
         state.finalizeDedup.timer = null
