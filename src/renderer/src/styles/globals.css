@@ -63,8 +63,9 @@ body,
   background-color: var(--term-bg, #1e1e2e);
 }
 
-/* IME composition 文本约束在光标到右边缘之间，防止向右溢出导致页面左移（对齐 xterm 7.0 #5747） */
+/* IME composition 文本约束在光标到右边缘之间，防止向右溢出导致页面左移（对齐 xterm 7.0 #5747）
+   注意: 不能用 direction:rtl，否则组合文本会反向显示（#5760），JS 侧 maxWidth 已足够防溢出 */
 .xterm .composition-view {
   overflow: hidden;
-  direction: rtl;
+  white-space: nowrap;
 }
