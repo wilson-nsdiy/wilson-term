@@ -9,6 +9,7 @@ import { resolveLogConfig } from '../utils/logConfig'
 import { resolveSettings } from '../utils/settingsResolver'
 import { buildFontFamily } from '../utils/font'
 import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseModeEnabled } from '../utils/pasteFilter'
+import { applyImePatches, removeImePatches } from '../utils/imePatch'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
 import TerminalStatusBar from './TerminalStatusBar'
@@ -202,6 +203,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     xterm.open(terminalRef.current)
     fitAddon.fit()
+    applyImePatches(xterm)
 
     if (resolved.backgroundImage) {
       xterm.element?.classList.add('xterm-bg-image')
@@ -330,6 +332,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       window.removeEventListener('resize', handleResize)
       xtermElement?.removeEventListener('compositionend', handleCompositionEnd)
       compositionMo?.disconnect()
+      removeImePatches(xterm)
       terminalRef.current?.removeEventListener('contextmenu', handleContextMenu)
       selectionChangeDisposable.dispose()
       searchResultDisposable.dispose()
