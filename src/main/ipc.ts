@@ -4,10 +4,10 @@ import { readFileSync } from 'fs'
 import { networkInterfaces } from 'os'
 import { registerConnectionHandlers, registerSSHSpecificHandlers, registerSerialSpecificHandlers, registerBashSpecificHandlers, getActiveClientsMap, connectionManager } from './connection/ipc'
 import { registerSFTPHandlers, setActiveConnectionsGetter } from './sftp'
-import { loadSavedSessionsFromDisk, saveSavedSessionsToDisk, loadIgnoredVersionsFromDisk, saveIgnoredVersionsFromDisk, loadCommandButtonGroupsFromDisk, saveCommandButtonGroupsToDisk, loadAppSettingsFromDisk, saveAppSettingsToDisk, loadViewStateFromDisk, saveViewStateToDisk, loadScheduledTasksFromDisk, saveScheduledTasksToDisk, loadProfilesFromDisk, saveProfilesToDisk, loadSavedSessionGroupsFromDisk, saveSavedSessionGroupsToDisk } from './storage'
+import { loadSavedSessionsFromDisk, saveSavedSessionsToDisk, loadCommandButtonGroupsFromDisk, saveCommandButtonGroupsToDisk, loadAppSettingsFromDisk, saveAppSettingsToDisk, loadViewStateFromDisk, saveViewStateToDisk, loadScheduledTasksFromDisk, saveScheduledTasksToDisk, loadProfilesFromDisk, saveProfilesToDisk, loadSavedSessionGroupsFromDisk, saveSavedSessionGroupsToDisk } from './storage'
 import { logManager } from './logger'
 import { appLogger } from './app-logger'
-import { checkForUpdates, getCurrentVersion, downloadUpdate, quitAndInstall, cancelAutoInstall, getStatus, getIgnoredVersions, saveIgnoredVersions } from './updater'
+import { checkForUpdates, getCurrentVersion, downloadUpdate, quitAndInstall, getStatus, getIgnoredVersions, saveIgnoredVersions } from './updater'
 import { getKeyboardLockState } from './keyboard'
 import { getComputerDomain } from './domain'
 import { mainPluginHost } from './plugin-host'
@@ -185,11 +185,6 @@ export function registerIpcHandlers(): void {
   // 安装更新
   ipcMain.handle('app:install-update', () => {
     quitAndInstall()
-  })
-
-  // 取消自动安装倒计时
-  ipcMain.handle('app:cancel-auto-install', () => {
-    cancelAutoInstall()
   })
 
   // 获取更新状态

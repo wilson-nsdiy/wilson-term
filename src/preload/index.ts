@@ -141,7 +141,6 @@ const api = {
     checkUpdate: (force?: boolean) => ipcRenderer.invoke('app:check-update', force),
     downloadUpdate: () => ipcRenderer.invoke('app:download-update'),
     installUpdate: () => ipcRenderer.invoke('app:install-update'),
-    cancelAutoInstall: () => ipcRenderer.invoke('app:cancel-auto-install'),
     getUpdateStatus: () => ipcRenderer.invoke('app:get-update-status'),
     getIgnoredVersions: () => ipcRenderer.invoke('app:get-ignored-versions'),
     saveIgnoredVersions: (versions: string[]) => ipcRenderer.invoke('app:save-ignored-versions', versions),
