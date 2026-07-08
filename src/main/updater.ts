@@ -11,8 +11,6 @@ let currentStatus: UpdateStatus = 'idle'
 let updateInfo: UpdateInfoSnapshot | undefined
 let downloadProgress: UpdateProgressSnapshot | undefined
 let lastError: string | undefined
-let autoInstallTimer: ReturnType<typeof setTimeout> | null = null
-let autoInstallCountdown = 0
 let isManual = false
 
 function sendToRenderer(channel: string, ...args: unknown[]): void {
@@ -27,7 +25,6 @@ function buildSnapshot(): UpdateStatusSnapshot {
     info: updateInfo,
     progress: downloadProgress,
     error: lastError,
-    autoInstallCountdown: autoInstallCountdown > 0 ? autoInstallCountdown : undefined,
     manual: isManual
   }
 }
@@ -120,7 +117,6 @@ export function initAutoUpdater(win: BrowserWindow): void {
   autoUpdater.on('update-downloaded', () => {
     downloadProgress = undefined
     setStatus('downloaded')
-    startAutoInstallCountdown()
   })
 
   autoUpdater.on('error', (err) => {
@@ -180,36 +176,7 @@ export async function downloadUpdate(): Promise<void> {
 }
 
 export function quitAndInstall(): void {
-  cancelAutoInstall()
   autoUpdater.quitAndInstall()
-}
-
-function startAutoInstallCountdown(): void {
-  cancelAutoInstall()
-  autoInstallCountdown = 5
-  pushStatus()
-
-  const tick = (): void => {
-    autoInstallCountdown--
-    if (autoInstallCountdown <= 0) {
-      autoInstallTimer = null
-      quitAndInstall()
-      return
-    }
-    pushStatus()
-    autoInstallTimer = setTimeout(tick, 1000)
-  }
-
-  autoInstallTimer = setTimeout(tick, 1000)
-}
-
-export function cancelAutoInstall(): void {
-  if (autoInstallTimer) {
-    clearTimeout(autoInstallTimer)
-    autoInstallTimer = null
-  }
-  autoInstallCountdown = 0
-  pushStatus()
 }
 
 export function getIgnoredVersions(): string[] {

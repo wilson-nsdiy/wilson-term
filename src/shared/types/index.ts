@@ -373,7 +373,6 @@ export interface UpdateStatusSnapshot {
   info?: UpdateInfoSnapshot
   progress?: UpdateProgressSnapshot
   error?: string
-  autoInstallCountdown?: number
   /** 是否由用户手动触发检查 */
   manual: boolean
 }
@@ -406,7 +405,6 @@ export interface AppAPI {
   checkUpdate: (force?: boolean) => Promise<UpdateStatusSnapshot>
   downloadUpdate: () => Promise<void>
   installUpdate: () => void
-  cancelAutoInstall: () => void
   getUpdateStatus: () => Promise<UpdateStatusSnapshot>
   getIgnoredVersions: () => Promise<string[]>
   saveIgnoredVersions: (versions: string[]) => Promise<void>
