@@ -105,8 +105,8 @@ export function registerIpcHandlers(): void {
   })
 
   // 存储：保存会话到磁盘
-  ipcMain.handle('storage:save-saved-sessions', (_event, sessions: SavedSession[]) => {
-    saveSavedSessionsToDisk(sessions)
+  ipcMain.handle('storage:save-saved-sessions', async (_event, sessions: SavedSession[]) => {
+    await saveSavedSessionsToDisk(sessions)
   })
 
   // 存储：加载保存的会话
@@ -134,8 +134,8 @@ export function registerIpcHandlers(): void {
     logManager.createLogger(sessionId, logConfig, connectionConfig)
   })
 
-  ipcMain.handle('log:stop', (_event, sessionId: string) => {
-    logManager.closeLogger(sessionId)
+  ipcMain.handle('log:stop', async (_event, sessionId: string) => {
+    await logManager.closeLogger(sessionId)
   })
 
   ipcMain.handle('log:get-file-path', (_event, sessionId: string) => {
@@ -202,8 +202,8 @@ export function registerIpcHandlers(): void {
     return getIgnoredVersions()
   })
 
-  ipcMain.handle('app:save-ignored-versions', (_event, versions: string[]) => {
-    saveIgnoredVersions(versions)
+  ipcMain.handle('app:save-ignored-versions', async (_event, versions: string[]) => {
+    await saveIgnoredVersions(versions)
   })
 
   // 存储：按钮栏分组数据
@@ -211,8 +211,8 @@ export function registerIpcHandlers(): void {
     return loadCommandButtonGroupsFromDisk()
   })
 
-  ipcMain.handle('storage:save-command-button-groups', (_event, groups: CommandButtonGroup[]) => {
-    saveCommandButtonGroupsToDisk(groups)
+  ipcMain.handle('storage:save-command-button-groups', async (_event, groups: CommandButtonGroup[]) => {
+    await saveCommandButtonGroupsToDisk(groups)
   })
 
   // 存储：应用设置
@@ -220,8 +220,8 @@ export function registerIpcHandlers(): void {
     return loadAppSettingsFromDisk()
   })
 
-  ipcMain.handle('storage:save-app-settings', (_event, settings: AppSettings) => {
-    saveAppSettingsToDisk(settings)
+  ipcMain.handle('storage:save-app-settings', async (_event, settings: AppSettings) => {
+    await saveAppSettingsToDisk(settings)
   })
 
   // 存储：视图状态
@@ -229,8 +229,8 @@ export function registerIpcHandlers(): void {
     return loadViewStateFromDisk()
   })
 
-  ipcMain.handle('storage:save-view-state', (_event, state: ViewState) => {
-    saveViewStateToDisk(state)
+  ipcMain.handle('storage:save-view-state', async (_event, state: ViewState) => {
+    await saveViewStateToDisk(state)
   })
 
   // 存储：定时任务
@@ -238,8 +238,8 @@ export function registerIpcHandlers(): void {
     return loadScheduledTasksFromDisk()
   })
 
-  ipcMain.handle('storage:save-scheduled-tasks', (_event, tasks: Record<string, ScheduledTask[]>) => {
-    saveScheduledTasksToDisk(tasks)
+  ipcMain.handle('storage:save-scheduled-tasks', async (_event, tasks: Record<string, ScheduledTask[]>) => {
+    await saveScheduledTasksToDisk(tasks)
   })
 
   // 存储：Profile 列表
@@ -247,8 +247,8 @@ export function registerIpcHandlers(): void {
     return loadProfilesFromDisk()
   })
 
-  ipcMain.handle('storage:save-profiles', (_event, profiles: Profile[]) => {
-    saveProfilesToDisk(profiles)
+  ipcMain.handle('storage:save-profiles', async (_event, profiles: Profile[]) => {
+    await saveProfilesToDisk(profiles)
   })
 
   // 存储：会话分组
@@ -257,7 +257,7 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('storage:saveSavedSessionGroups', async (_event, groups: SavedSessionGroup[]) => {
-    saveSavedSessionGroupsToDisk(groups)
+    await saveSavedSessionGroupsToDisk(groups)
   })
 
   // 插件管理

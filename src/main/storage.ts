@@ -1,5 +1,6 @@
 import { app } from 'electron'
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, existsSync } from 'fs'
+import { promises as fsPromises } from 'fs'
 import { join, dirname } from 'path'
 import type { SavedSession, CommandButtonGroup, AppSettings, ScheduledTask, Profile, SavedSessionGroup } from '@shared/types'
 
@@ -9,6 +10,30 @@ export interface ViewState {
   commandInputVisible: boolean
   statusBarVisible: boolean
   buttonBarVisible: boolean
+}
+
+/** 已确认存在的目录缓存，避免每次写入都重复 existsSync */
+const ensuredDirs = new Set<string>()
+
+/**
+ * 异步确保目录存在（带缓存）。
+ * save 路径专用：避免每次写入都重复 existsSync + mkdirSync 阻塞主进程。
+ */
+async function ensureDirAsync(dir: string): Promise<void> {
+  if (ensuredDirs.has(dir)) return
+  if (existsSync(dir)) {
+    ensuredDirs.add(dir)
+    return
+  }
+  await fsPromises.mkdir(dir, { recursive: true })
+  ensuredDirs.add(dir)
+}
+
+/** 将数据以 JSON 写入存储目录下的指定文件（统一 ensureDir + 异步写入） */
+async function writeJsonFile(filename: string, data: unknown): Promise<void> {
+  const filePath = getStoragePath(filename)
+  await ensureDirAsync(dirname(filePath))
+  await fsPromises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8')
 }
 
 /** 获取存储目录路径 */
@@ -47,13 +72,8 @@ export function loadSavedSessionsFromDisk(): SavedSession[] {
 }
 
 /** 将保存的会话写入磁盘 */
-export function saveSavedSessionsToDisk(sessions: SavedSession[]): void {
-  const filePath = getStoragePath('saved-sessions.json')
-  const dir = dirname(filePath)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
-  writeFileSync(filePath, JSON.stringify(sessions, null, 2), 'utf-8')
+export async function saveSavedSessionsToDisk(sessions: SavedSession[]): Promise<void> {
+  await writeJsonFile('saved-sessions.json', sessions)
 }
 
 /** 从磁盘加载被忽略的版本列表 */
@@ -71,13 +91,8 @@ export function loadIgnoredVersionsFromDisk(): string[] {
 }
 
 /** 将被忽略的版本写入磁盘 */
-export function saveIgnoredVersionsToDisk(versions: string[]): void {
-  const filePath = getStoragePath('ignored-versions.json')
-  const dir = dirname(filePath)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
-  writeFileSync(filePath, JSON.stringify(versions), 'utf-8')
+export async function saveIgnoredVersionsToDisk(versions: string[]): Promise<void> {
+  await writeJsonFile('ignored-versions.json', versions)
 }
 
 /** 从磁盘加载命令按钮分组（兼容旧版 command 字段） */
@@ -108,13 +123,8 @@ export function loadCommandButtonGroupsFromDisk(): CommandButtonGroup[] {
 }
 
 /** 将命令按钮分组写入磁盘 */
-export function saveCommandButtonGroupsToDisk(groups: CommandButtonGroup[]): void {
-  const filePath = getStoragePath('command-button-groups.json')
-  const dir = dirname(filePath)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
-  writeFileSync(filePath, JSON.stringify(groups, null, 2), 'utf-8')
+export async function saveCommandButtonGroupsToDisk(groups: CommandButtonGroup[]): Promise<void> {
+  await writeJsonFile('command-button-groups.json', groups)
 }
 
 /** 从磁盘加载应用设置 */
@@ -132,13 +142,8 @@ export function loadAppSettingsFromDisk(): AppSettings | null {
 }
 
 /** 将应用设置写入磁盘 */
-export function saveAppSettingsToDisk(settings: AppSettings): void {
-  const filePath = getStoragePath('app-settings.json')
-  const dir = dirname(filePath)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
-  writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf-8')
+export async function saveAppSettingsToDisk(settings: AppSettings): Promise<void> {
+  await writeJsonFile('app-settings.json', settings)
 }
 
 /** 从磁盘加载视图状态 */
@@ -156,13 +161,8 @@ export function loadViewStateFromDisk(): ViewState | null {
 }
 
 /** 将视图状态写入磁盘 */
-export function saveViewStateToDisk(state: ViewState): void {
-  const filePath = getStoragePath('view-state.json')
-  const dir = dirname(filePath)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
-  writeFileSync(filePath, JSON.stringify(state, null, 2), 'utf-8')
+export async function saveViewStateToDisk(state: ViewState): Promise<void> {
+  await writeJsonFile('view-state.json', state)
 }
 
 /** 从磁盘加载定时任务 */
@@ -180,13 +180,8 @@ export function loadScheduledTasksFromDisk(): Record<string, ScheduledTask[]> {
 }
 
 /** 将定时任务写入磁盘 */
-export function saveScheduledTasksToDisk(tasks: Record<string, ScheduledTask[]>): void {
-  const filePath = getStoragePath('scheduled-tasks.json')
-  const dir = dirname(filePath)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
-  writeFileSync(filePath, JSON.stringify(tasks, null, 2), 'utf-8')
+export async function saveScheduledTasksToDisk(tasks: Record<string, ScheduledTask[]>): Promise<void> {
+  await writeJsonFile('scheduled-tasks.json', tasks)
 }
 
 /** 从磁盘加载 Profile 列表 */
@@ -204,13 +199,8 @@ export function loadProfilesFromDisk(): Profile[] {
 }
 
 /** 将 Profile 列表写入磁盘 */
-export function saveProfilesToDisk(profiles: Profile[]): void {
-  const filePath = getStoragePath('profiles.json')
-  const dir = dirname(filePath)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
-  writeFileSync(filePath, JSON.stringify(profiles, null, 2), 'utf-8')
+export async function saveProfilesToDisk(profiles: Profile[]): Promise<void> {
+  await writeJsonFile('profiles.json', profiles)
 }
 
 /** 从磁盘加载上次自动检查更新的时间戳 */
@@ -229,13 +219,8 @@ export function loadLastAutoCheckTimestamp(): number | null {
 }
 
 /** 将上次自动检查更新的时间戳写入磁盘 */
-export function saveLastAutoCheckTimestamp(timestamp: number): void {
-  const filePath = getStoragePath('last-auto-check.json')
-  const dir = dirname(filePath)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
-  writeFileSync(filePath, JSON.stringify({ timestamp }), 'utf-8')
+export async function saveLastAutoCheckTimestamp(timestamp: number): Promise<void> {
+  await writeJsonFile('last-auto-check.json', { timestamp })
 }
 
 /** 从磁盘加载保存的会话分组 */
@@ -253,11 +238,6 @@ export function loadSavedSessionGroupsFromDisk(): SavedSessionGroup[] {
 }
 
 /** 将保存的会话分组写入磁盘 */
-export function saveSavedSessionGroupsToDisk(groups: SavedSessionGroup[]): void {
-  const filePath = getStoragePath('saved-session-groups.json')
-  const dir = dirname(filePath)
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true })
-  }
-  writeFileSync(filePath, JSON.stringify(groups, null, 2), 'utf-8')
+export async function saveSavedSessionGroupsToDisk(groups: SavedSessionGroup[]): Promise<void> {
+  await writeJsonFile('saved-session-groups.json', groups)
 }

@@ -150,13 +150,36 @@ class SessionLogger {
     this.currentFileSize += Buffer.byteLength(formatted, 'utf-8')
   }
 
-  /** 关闭日志写入器 */
-  close(): void {
+  /** 关闭日志写入器，等待 writeStream end() 完成以保证最后一批数据落盘 */
+  close(): Promise<void> {
+    this.flush()
+    return this.closeStreamAsync()
+  }
+
+  /** 同步关闭流（用于 rotate 场景，无法阻塞主进程） */
+  private closeSync(): void {
     this.flush()
     if (this.writeStream) {
       this.writeStream.end()
       this.writeStream = null
     }
+  }
+
+  /** 异步关闭流并等待 finish，带 1s 兜底 */
+  private closeStreamAsync(): Promise<void> {
+    const stream = this.writeStream
+    this.writeStream = null
+    if (!stream) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const guard = setTimeout(() => resolve(), 1000)
+      const done = (): void => {
+        clearTimeout(guard)
+        resolve()
+      }
+      stream.on('close', done)
+      stream.on('error', done)
+      stream.end()
+    })
   }
 
   /** 确保目录存在 */
@@ -192,7 +215,7 @@ class SessionLogger {
 
   /** 分割日志文件 */
   private rotateFile(): void {
-    this.close()
+    this.closeSync()
     this.openNewFile()
   }
 
@@ -201,11 +224,13 @@ class SessionLogger {
 /** 管理所有会话的日志写入器 */
 class LogManager {
   private loggers = new Map<string, SessionLogger>()
+  /** fire-and-forget 调用方启动的 close promise，closeAll 兜底等待 */
+  private readonly pendingCloses = new Set<Promise<void>>()
 
   /** 为会话创建日志写入器 */
   createLogger(sessionId: string, config: LogConfig, connectionConfig: ConnectionConfig): void {
     // 如果已有，先关闭
-    this.closeLogger(sessionId)
+    void this.closeLogger(sessionId)
     if (!config.logEnabled) return
     try {
       const logger = new SessionLogger(config, connectionConfig)
@@ -223,12 +248,17 @@ class LogManager {
     }
   }
 
-  /** 关闭会话的日志写入器 */
-  closeLogger(sessionId: string): void {
+  /** 关闭会话的日志写入器，等待落盘完成 */
+  async closeLogger(sessionId: string): Promise<void> {
     const logger = this.loggers.get(sessionId)
-    if (logger) {
-      logger.close()
-      this.loggers.delete(sessionId)
+    if (!logger) return
+    this.loggers.delete(sessionId)
+    const p = logger.close()
+    this.pendingCloses.add(p)
+    try {
+      await p
+    } finally {
+      this.pendingCloses.delete(p)
     }
   }
 
@@ -244,10 +274,12 @@ class LogManager {
     return logger ? logger['baseLogDir'] || null : null
   }
 
-  /** 关闭所有日志写入器 */
-  closeAll(): void {
-    for (const sessionId of this.loggers.keys()) {
-      this.closeLogger(sessionId)
+  /** 关闭所有日志写入器，等待全部落盘完成 */
+  async closeAll(): Promise<void> {
+    const ids = [...this.loggers.keys()]
+    await Promise.all(ids.map((id) => this.closeLogger(id)))
+    if (this.pendingCloses.size > 0) {
+      await Promise.all([...this.pendingCloses])
     }
   }
 }

@@ -28,7 +28,7 @@ export class TelnetConnection extends BaseConnection {
 
       const cleanup = (): void => {
         if (this.fulfilled) return
-        logManager.closeLogger(this.sessionId)
+        void logManager.closeLogger(this.sessionId)
         this.socket = null
         this.protocol = null
       }
@@ -50,7 +50,7 @@ export class TelnetConnection extends BaseConnection {
 
         socket.on('close', () => {
           this.flushRemaining()
-          logManager.closeLogger(this.sessionId)
+          void logManager.closeLogger(this.sessionId)
           this.socket = null
           this.protocol = null
           this.emitStatus('disconnected')
@@ -81,12 +81,18 @@ export class TelnetConnection extends BaseConnection {
           else if (/ENOTFOUND/.test(message)) message = `无法解析主机名：${config.host}`
           else if (/ETIMEDOUT/.test(message)) message = `连接超时：${config.host}:${config.port}`
           reject(new Error(message))
+        } else {
+          // 连接已建立后收到错误（如对端 RST）：放宽 statusSent 让 emitStatus 真正下发 disconnected
+          this.statusSent = false
+          this.flushRemaining()
+          void logManager.closeLogger(this.sessionId)
+          this.emitStatus('disconnected', err.message)
         }
       })
     })
   }
 
-  async disconnect(): Promise<void> {
+  protected async doDisconnect(): Promise<void> {
     this.statusSent = true
     if (this.socket) {
       this.socket.destroy()

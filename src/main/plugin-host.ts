@@ -33,6 +33,11 @@ class MainPluginHost {
   }>()
   private registry: PluginRegistryEntry[] = []
   private pendingStorageChannels: string[] = []
+  /**
+   * createContext 在 plugins.set 之前执行，若此时有 ipc.handle 注册（目前仅 storage handler，
+   * 未来可能扩展），channel 暂存此处，set 后转移给 entry，避免 cleanupPluginResources 无法移除。
+   */
+  private pendingRegisteredChannels: string[] = []
 
   private getPluginsDir(): string {
     const base = process.env.LOCALAPPDATA
@@ -76,7 +81,9 @@ class MainPluginHost {
       const ctx = this.createContext(definition)
       this.plugins.set(manifest.id, {
         definition, ctx, active: false, activating: false,
-        registeredChannels: [], storageChannels: this.pendingStorageChannels.splice(0), unsubscribes: [],
+        registeredChannels: this.pendingRegisteredChannels.splice(0),
+        storageChannels: this.pendingStorageChannels.splice(0),
+        unsubscribes: [],
       })
       return true
     } catch (err) {
@@ -309,6 +316,7 @@ class MainPluginHost {
               const namespacedChannel = `plugin:${pluginId}:${channel}`
               const entry = this.plugins.get(pluginId)
               if (entry) entry.registeredChannels.push(namespacedChannel)
+              else this.pendingRegisteredChannels.push(namespacedChannel)
               ipcMain.handle(namespacedChannel, handler)
             }
           }
