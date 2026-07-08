@@ -25,6 +25,15 @@ export function registerConnectionHandlers(): void {
     await connectionManager.remove(sessionId)
   })
 
+  // 重新打开（在现有连接上开新 shell，SSH 专有快速重连）
+  ipcMain.handle('connection:reopen', async (_event, sessionId: string) => {
+    const conn = connectionManager.get(sessionId)
+    if (!conn?.reopen) {
+      throw new Error('当前连接不支持重新打开')
+    }
+    await conn.reopen()
+  })
+
   // 写入数据
   ipcMain.on('connection:write', (_event, sessionId: string, data: string) => {
     const conn = connectionManager.get(sessionId)
