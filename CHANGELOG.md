@@ -5,7 +5,12 @@ All notable changes to Wilson Term will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.9.10] - 2026-07-08
+
+### Fixed
+
+- 日志目录改为用户可写路径，避免 Program Files UAC 限制导致日志写入失败
+- 修复已知 Bugs
 
 ## [v0.9.9] - 2026-07-03
 
