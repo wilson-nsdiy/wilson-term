@@ -134,8 +134,8 @@ export function registerIpcHandlers(): void {
     logManager.createLogger(sessionId, logConfig, connectionConfig)
   })
 
-  ipcMain.handle('log:stop', (_event, sessionId: string) => {
-    logManager.closeLogger(sessionId)
+  ipcMain.handle('log:stop', async (_event, sessionId: string) => {
+    await logManager.closeLogger(sessionId)
   })
 
   ipcMain.handle('log:get-file-path', (_event, sessionId: string) => {

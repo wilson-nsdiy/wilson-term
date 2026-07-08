@@ -98,7 +98,7 @@ export class BashConnection extends BaseConnection {
 
         pty.onExit(({ exitCode }) => {
           this.flushRemaining()
-          logManager.closeLogger(this.sessionId)
+          void logManager.closeLogger(this.sessionId)
           this.pty = null
           const msg = exitCode === 0 ? undefined : `进程退出，代码: ${exitCode}`
           this.emitStatus('disconnected', msg)
@@ -113,9 +113,9 @@ export class BashConnection extends BaseConnection {
     })
   }
 
-  async disconnect(): Promise<void> {
+  protected async doDisconnect(): Promise<void> {
     this.statusSent = true
-    logManager.closeLogger(this.sessionId)
+    await logManager.closeLogger(this.sessionId)
     if (this.pty) {
       this.pty.kill()
       this.pty = null

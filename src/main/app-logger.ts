@@ -1,6 +1,6 @@
 /**
  * 应用错误日志模块
- * 捕获主进程未处理异常并写入日志文件，存储在安装目录/log 下
+ * 捕获主进程未处理异常并写入日志文件，存储在用户可写日志目录下
  */
 
 import { app } from 'electron'
@@ -13,14 +13,19 @@ const MAX_LOG_FILES = 10
 /** 单个日志文件最大大小 5MB */
 const MAX_LOG_SIZE = 5 * 1024 * 1024
 
-/** 获取应用日志目录路径（安装目录/log） */
+/** 获取应用日志目录路径 */
 function getAppLogDir(): string {
-  // 打包后：process.resourcesPath 的上级目录就是安装目录（如 C:\Program Files\wilson-terminal）
-  // 开发环境：使用项目根目录
-  const basePath = app.isPackaged
-    ? join(process.resourcesPath, '..')
-    : app.getAppPath()
-  return join(basePath, 'log')
+  // 优先使用系统日志目录（打包后位于用户可写位置，避免 Program Files UAC 限制）
+  // 回退到 userData，最后回退到开发环境项目目录
+  try {
+    return app.getPath('logs')
+  } catch {
+    try {
+      return join(app.getPath('userData'), 'log')
+    } catch {
+      return join(app.getAppPath(), 'log')
+    }
+  }
 }
 
 /** 格式化时间戳：YYYY-MM-DD HH:mm:ss.SSS */

@@ -65,7 +65,7 @@ export class SerialConnection extends BaseConnection {
 
         port.on('close', () => {
           this.flushRemaining()
-          logManager.closeLogger(this.sessionId)
+          void logManager.closeLogger(this.sessionId)
           this.port = null
           this.emitStatus('disconnected')
         })
@@ -74,7 +74,7 @@ export class SerialConnection extends BaseConnection {
           console.error(`串口 [${this.sessionId}] 错误:`, err.message)
           appLogger.error('Serial', err)
           this.flushRemaining()
-          logManager.closeLogger(this.sessionId)
+          void logManager.closeLogger(this.sessionId)
           this.port = null
           this.emitStatus('error', err.message)
         })
@@ -84,7 +84,7 @@ export class SerialConnection extends BaseConnection {
     })
   }
 
-  async disconnect(): Promise<void> {
+  protected async doDisconnect(): Promise<void> {
     this.statusSent = true
     if (!this.port) return
 
