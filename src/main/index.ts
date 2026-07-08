@@ -178,10 +178,10 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
   stopPolling()
   pollingNeeded = false
-  logManager.closeAll()
+  await logManager.closeAll()
   if (process.platform !== 'darwin') {
     app.quit()
   }

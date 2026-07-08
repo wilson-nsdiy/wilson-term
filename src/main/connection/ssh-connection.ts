@@ -158,6 +158,22 @@ export function respondPassword(sessionId: string, password: string): void {
   }
 }
 
+/** 拒绝指定会话挂起的密码 / 主机密钥 Promise，并清理定时器 */
+function rejectPendingResolvers(sessionId: string, reason: Error): void {
+  const pwResolver = passwordResolvers.get(sessionId)
+  if (pwResolver) {
+    clearTimeout(pwResolver.timer)
+    passwordResolvers.delete(sessionId)
+    pwResolver.reject(reason)
+  }
+  const hkResolver = hostKeyVerifyResolvers.get(sessionId)
+  if (hkResolver) {
+    clearTimeout(hkResolver.timer)
+    hostKeyVerifyResolvers.delete(sessionId)
+    hkResolver.reject(reason)
+  }
+}
+
 /** 生成 SSH 密钥对 */
 export function generateKeyPair(type: 'ed25519' | 'rsa' = 'ed25519'): KeyPairResult {
   try {
@@ -340,16 +356,12 @@ export class SSHConnection extends BaseConnection {
       this.client = client
 
       const cleanup = (): void => {
-        logManager.closeLogger(this.sessionId)
+        void logManager.closeLogger(this.sessionId)
         this.channel = null
         this.client = null
         activeClients.delete(this.sessionId)
         connectionInstances.delete(this.sessionId)
-        const pwResolver = passwordResolvers.get(this.sessionId)
-        if (pwResolver) {
-          clearTimeout(pwResolver.timer)
-          passwordResolvers.delete(this.sessionId)
-        }
+        rejectPendingResolvers(this.sessionId, new Error('cancelled'))
       }
 
       connectConfig.hostVerifier = (key: Buffer, callback: (verified: boolean) => void) => {
@@ -457,6 +469,10 @@ export class SSHConnection extends BaseConnection {
         if (!this.fulfilled) {
           this.fulfilled = true
           reject(new Error(message))
+        } else {
+          // 已连接后出错：放宽 statusSent 让 emitStatus 真正下发 disconnected
+          this.statusSent = false
+          this.emitStatus('disconnected', message)
         }
       })
 
@@ -470,9 +486,10 @@ export class SSHConnection extends BaseConnection {
     })
   }
 
-  async disconnect(): Promise<void> {
+  protected async doDisconnect(): Promise<void> {
     this.statusSent = true
-    logManager.closeLogger(this.sessionId)
+    await logManager.closeLogger(this.sessionId)
+    rejectPendingResolvers(this.sessionId, new Error('cancelled'))
     if (this.channel) {
       this.channel.close()
       this.channel = null

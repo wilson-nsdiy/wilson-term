@@ -41,6 +41,35 @@ function setStatus(status: UpdateStatus): void {
   pushStatus()
 }
 
+/** 将 GitHub atom feed 里的 HTML releaseNotes 转回 markdown 文本 */
+function htmlToMarkdown(html: string): string {
+  return html
+    .replace(/<h([1-6])>([^<]*)<\/h\1>/g, (_, level, text) => `${'#'.repeat(Number(level))} ${text}`)
+    .replace(/<li>([^<]*)<\/li>/g, '- $1')
+    .replace(/<\/?(ul|ol|table|thead|tbody|tr|th|td|p|hr|div|blockquote|a|code|pre|strong|em)[^>]*>/g, '')
+    .replace(/<br\s*\/?>/g, '\n')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** 从 GitHub Release body 中提取 changelog 部分，去掉标题、项目介绍、下载表格、系统要求等无关内容 */
+function extractChangelog(raw: string): string | null {
+  const text = htmlToMarkdown(raw)
+  const lines = text.split(/\r?\n/)
+  const headings = ['### Added', '### Changed', '### Fixed', '### Removed', '### Deprecated', '### Security']
+  const startIdx = lines.findIndex((l) => headings.some((h) => l.startsWith(h)))
+  if (startIdx === -1) return null
+  const endIdx = lines.findIndex((l, i) => i > startIdx && /^### /.test(l) && !headings.some((h) => l.startsWith(h)))
+  const end = endIdx === -1 ? lines.length : endIdx
+  const block = lines.slice(startIdx, end).join('\n').trim()
+  return block || null
+}
+
 export function initAutoUpdater(win: BrowserWindow): void {
   mainWindow = win
 
@@ -57,14 +86,15 @@ export function initAutoUpdater(win: BrowserWindow): void {
       setStatus('not-available')
       return
     }
+    const rawNotes = typeof info.releaseNotes === 'string'
+      ? info.releaseNotes
+      : Array.isArray(info.releaseNotes)
+        ? info.releaseNotes.map((n) => n.note).filter(Boolean).join('\n')
+        : null
     updateInfo = {
       version: info.version,
       releaseDate: info.releaseDate,
-      releaseNotes: typeof info.releaseNotes === 'string'
-        ? info.releaseNotes
-        : Array.isArray(info.releaseNotes)
-          ? info.releaseNotes.map((n) => n.note).filter(Boolean).join('\n')
-          : null
+      releaseNotes: rawNotes ? extractChangelog(rawNotes) : null
     }
     downloadProgress = undefined
     lastError = undefined
@@ -130,7 +160,9 @@ export async function checkForUpdates(force = false): Promise<UpdateStatusSnapsh
 
   try {
     await autoUpdater.checkForUpdates()
-    saveLastAutoCheckTimestamp(Date.now())
+    saveLastAutoCheckTimestamp(Date.now()).catch((err) => {
+      console.error('保存上次检查时间戳失败:', err)
+    })
   } catch (err) {
     lastError = err instanceof Error ? err.message : '检查更新失败'
     setStatus('error')
@@ -184,8 +216,8 @@ export function getIgnoredVersions(): string[] {
   return loadIgnoredVersionsFromDisk()
 }
 
-export function saveIgnoredVersions(versions: string[]): void {
-  saveIgnoredVersionsToDisk(versions)
+export async function saveIgnoredVersions(versions: string[]): Promise<void> {
+  await saveIgnoredVersionsToDisk(versions)
 }
 
 export function shouldSkipUpdate(version: string): boolean {

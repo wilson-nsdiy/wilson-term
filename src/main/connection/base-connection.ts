@@ -18,8 +18,15 @@ export abstract class BaseConnection implements TerminalConnection {
   }
 
   abstract connect(): Promise<void>
-  abstract disconnect(): Promise<void>
   abstract write(data: string): void
+
+  /** 模板方法：先刷出缓冲数据，再执行子类资源清理 */
+  async disconnect(): Promise<void> {
+    this.flushRemaining()
+    await this.doDisconnect()
+  }
+
+  protected abstract doDisconnect(): Promise<void>
 
   protected emitStatus(status: SessionStatus, errorMessage?: string): void {
     if (this.statusSent) return
