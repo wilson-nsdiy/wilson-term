@@ -28,7 +28,7 @@ export class TelnetConnection extends BaseConnection {
 
       const cleanup = (): void => {
         if (this.fulfilled) return
-        logManager.closeLogger(this.sessionId)
+        void logManager.closeLogger(this.sessionId)
         this.socket = null
         this.protocol = null
       }
@@ -50,7 +50,7 @@ export class TelnetConnection extends BaseConnection {
 
         socket.on('close', () => {
           this.flushRemaining()
-          logManager.closeLogger(this.sessionId)
+          void logManager.closeLogger(this.sessionId)
           this.socket = null
           this.protocol = null
           this.emitStatus('disconnected')
@@ -86,7 +86,7 @@ export class TelnetConnection extends BaseConnection {
     })
   }
 
-  async disconnect(): Promise<void> {
+  protected async doDisconnect(): Promise<void> {
     this.statusSent = true
     if (this.socket) {
       this.socket.destroy()

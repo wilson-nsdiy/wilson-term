@@ -79,6 +79,8 @@ const Sidebar: React.FC = () => {
   // 侧边栏宽度调整状态
   const [isResizing, setIsResizing] = useState(false)
   const sidebarRef = useRef<HTMLDivElement>(null)
+  // 拖动期间以 rAF 节流派发 resize，触发终端 fit
+  const resizeRafRef = useRef<number | null>(null)
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
@@ -88,11 +90,23 @@ const Sidebar: React.FC = () => {
         if (sidebarRef.current) {
           sidebarRef.current.style.width = `${newWidth}px`
         }
+        if (resizeRafRef.current == null) {
+          resizeRafRef.current = requestAnimationFrame(() => {
+            resizeRafRef.current = null
+            window.dispatchEvent(new Event('resize'))
+          })
+        }
       }
     }
 
     const handleMouseUp = () => {
       setIsResizing(false)
+      if (resizeRafRef.current != null) {
+        cancelAnimationFrame(resizeRafRef.current)
+        resizeRafRef.current = null
+      }
+      // 拖动结束兜底触发一次 fit，确保最终尺寸对齐
+      window.dispatchEvent(new Event('resize'))
     }
 
     if (isResizing) {
