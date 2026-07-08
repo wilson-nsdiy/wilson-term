@@ -171,6 +171,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       lineHeight: resolved.lineHeight,
       letterSpacing: resolved.letterSpacing,
       scrollback: resolved.scrollback,
+      scrollOnEraseInDisplay: true, // #5801: ED2 改为下滚，避免 AI CLI 流式重绘抖屏
       theme: {
         background: '#00000000',
         foreground: resolved.foreground,
@@ -204,6 +205,9 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     xterm.open(terminalRef.current)
     fitAddon.fit()
     applyImePatches(xterm)
+
+    // #5881: DOM 渲染器行容器被 aria-hidden 屏蔽，屏幕阅读器不可读
+    xterm.element?.querySelector('.xterm-rows')?.removeAttribute('aria-hidden')
 
     if (resolved.backgroundImage) {
       xterm.element?.classList.add('xterm-bg-image')
