@@ -81,6 +81,12 @@ export class TelnetConnection extends BaseConnection {
           else if (/ENOTFOUND/.test(message)) message = `无法解析主机名：${config.host}`
           else if (/ETIMEDOUT/.test(message)) message = `连接超时：${config.host}:${config.port}`
           reject(new Error(message))
+        } else {
+          // 连接已建立后收到错误（如对端 RST）：放宽 statusSent 让 emitStatus 真正下发 disconnected
+          this.statusSent = false
+          this.flushRemaining()
+          void logManager.closeLogger(this.sessionId)
+          this.emitStatus('disconnected', err.message)
         }
       })
     })

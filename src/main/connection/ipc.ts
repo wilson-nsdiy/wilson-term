@@ -13,7 +13,9 @@ export function registerConnectionHandlers(): void {
     try {
       await conn.connect()
     } catch (err) {
-      connectionManager.remove(config.id)
+      void connectionManager.remove(config.id).catch((e) => {
+        console.error('清理失败连接时出错:', e)
+      })
       throw err
     }
   })
