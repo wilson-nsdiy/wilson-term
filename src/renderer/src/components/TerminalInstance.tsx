@@ -433,6 +433,18 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
           updateSessionStatus(sessionId, 'connecting')
           const resolvedLogConfig = resolveLogConfig(config.logConfig, useAppStore.getState().settings)
           const doConnect = async () => {
+            // 先尝试在现有连接上重新打开（SSH 可复用底层连接，无需重新认证）
+            try {
+              await window.api.connection.reopen(sessionId)
+              // reopen 成功后同步终端尺寸到新 shell
+              if (config.type !== 'serial') {
+                window.api.connection.resize(sessionId, xterm.cols, xterm.rows)
+              }
+              updateSessionStatus(sessionId, 'connected')
+              return
+            } catch {
+              // reopen 失败（连接类型不支持或客户端已断开），回退到完整重连
+            }
             try {
               await window.api.connection.disconnect(sessionId)
             } catch {

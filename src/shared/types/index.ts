@@ -454,6 +454,7 @@ export interface SFTPAPI {
 export interface ConnectionAPI {
   connect: (config: ConnectionConfig, logConfig?: LogConfig) => Promise<void>
   disconnect: (sessionId: string) => Promise<void>
+  reopen: (sessionId: string) => Promise<void>
   write: (sessionId: string, data: string) => void
   resize: (sessionId: string, cols: number, rows: number) => void
   onData: (callback: (sessionId: string, data: string) => void) => () => void
