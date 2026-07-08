@@ -51,4 +51,4 @@ plugins/*/*.zip
 # AI
 .codegraph/
 .qoder/
-.mimo/
+.mimocode/
