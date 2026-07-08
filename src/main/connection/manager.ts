@@ -9,6 +9,8 @@ import { BashConnection } from './bash-connection'
 /** 连接管理器：工厂 + 注册表 */
 export class ConnectionManager {
   private connections = new Map<string, TerminalConnection>()
+  /** 正在 disconnect 的会话：value 为 disconnect 完成的 Promise，防止并发重复 disconnect */
+  private disconnecting = new Map<string, Promise<void>>()
 
   create(config: ConnectionConfig, logConfig: LogConfig | undefined, sender: WebContents): TerminalConnection {
     const sessionId = config.id
@@ -43,11 +45,25 @@ export class ConnectionManager {
   }
 
   async remove(sessionId: string): Promise<void> {
+    // 并发 disconnect 保护：若已有正在进行的 disconnect，复用其 Promise
+    const pending = this.disconnecting.get(sessionId)
+    if (pending) return pending
+
     const conn = this.connections.get(sessionId)
-    if (conn) {
-      await conn.disconnect()
-      this.connections.delete(sessionId)
-    }
+    if (!conn) return
+
+    // 立即从注册表移除，使重连（相同 sessionId 的 create）可立即成功
+    this.connections.delete(sessionId)
+
+    const p = (async (): Promise<void> => {
+      try {
+        await conn.disconnect()
+      } finally {
+        this.disconnecting.delete(sessionId)
+      }
+    })()
+    this.disconnecting.set(sessionId, p)
+    return p
   }
 
   has(sessionId: string): boolean {

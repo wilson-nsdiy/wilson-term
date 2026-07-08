@@ -130,7 +130,9 @@ export async function checkForUpdates(force = false): Promise<UpdateStatusSnapsh
 
   try {
     await autoUpdater.checkForUpdates()
-    saveLastAutoCheckTimestamp(Date.now())
+    saveLastAutoCheckTimestamp(Date.now()).catch((err) => {
+      console.error('保存上次检查时间戳失败:', err)
+    })
   } catch (err) {
     lastError = err instanceof Error ? err.message : '检查更新失败'
     setStatus('error')
@@ -184,8 +186,8 @@ export function getIgnoredVersions(): string[] {
   return loadIgnoredVersionsFromDisk()
 }
 
-export function saveIgnoredVersions(versions: string[]): void {
-  saveIgnoredVersionsToDisk(versions)
+export async function saveIgnoredVersions(versions: string[]): Promise<void> {
+  await saveIgnoredVersionsToDisk(versions)
 }
 
 export function shouldSkipUpdate(version: string): boolean {

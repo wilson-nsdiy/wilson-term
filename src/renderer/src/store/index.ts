@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import type { TerminalSession, AppSettings, ConnectionConfig, SavedSession, SavedSessionGroup, CommandButtonGroup, ViewState, KeyboardLockState, ScheduledTask, Profile, ProfileOverrides } from '@shared/types'
 import { createLogConfigFromSettings, resolveLogConfig } from '../utils/logConfig'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
+
+/** persistSessionGroups 的 debounce timer，合并拖拽期间的多次保存 */
+let persistSessionGroupsTimer: ReturnType<typeof setTimeout> | null = null
 /** 应用状态 */
 interface AppState {
   /** 当前活跃的会话标签页 ID */
@@ -615,12 +618,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   persistSessionGroups: async () => {
-    try {
-      const { savedSessionGroups } = get()
-      await window.api.storage.saveSavedSessionGroups(savedSessionGroups)
-    } catch (err) {
-      console.error('保存会话分组到磁盘失败:', err)
-    }
+    // debounce：拖拽分组时频繁触发，合并 300ms 内的多次调用，只保留最后一次的数据快照
+    if (persistSessionGroupsTimer) clearTimeout(persistSessionGroupsTimer)
+    const snapshot = get().savedSessionGroups
+    persistSessionGroupsTimer = setTimeout(async () => {
+      persistSessionGroupsTimer = null
+      try {
+        await window.api.storage.saveSavedSessionGroups(snapshot)
+      } catch (err) {
+        console.error('保存会话分组到磁盘失败:', err)
+      }
+    }, 300)
   },
 
   // ---- 设置 Actions ----
