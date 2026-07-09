@@ -2,7 +2,6 @@ import type {
   PluginDefinition,
   PluginContext,
   RendererPlugin,
-  PluginMenuItem,
   PluginListItem,
   PluginStatusBarItem,
   PluginManifest
@@ -120,15 +119,6 @@ class RendererPluginHost {
       if (!entry.active || !entry.renderer.statusBarItem) continue
       const item = entry.renderer.statusBarItem(sessionId)
       if (item) items.push({ ...item, pluginId: entry.definition.manifest.id })
-    }
-    return items
-  }
-
-  collectMenuItems(): PluginMenuItem[] {
-    const items: PluginMenuItem[] = []
-    for (const [, entry] of this.plugins) {
-      if (!entry.active || !entry.renderer.menuItems) continue
-      items.push(...entry.renderer.menuItems())
     }
     return items
   }

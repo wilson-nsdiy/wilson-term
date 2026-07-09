@@ -40,14 +40,6 @@ export interface PluginStatusBarItem {
   tooltip?: string
 }
 
-/** 声明式菜单项 */
-export interface PluginMenuItem {
-  label: string
-  checked?: boolean
-  disabled?: boolean
-  onClick: () => void
-}
-
 /** 插件运行时上下文 */
 export interface PluginContext {
   storage: {
@@ -97,7 +89,6 @@ export interface MainPlugin extends PluginLifecycle {
 /** 渲染进程插件 */
 export interface RendererPlugin extends PluginLifecycle {
   statusBarItem?(sessionId: string): PluginStatusBarItem | null
-  menuItems?(): PluginMenuItem[]
 }
 
 /** 插件定义 */
