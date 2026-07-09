@@ -30,8 +30,7 @@ export default defineConfig({
   },
   renderer: {
     build: {
-      outDir: 'dist/renderer',
-      target: 'es2021' // #5800: 防止 Vite/terser 二次压缩破坏 ||= 等 ES2022 语法
+      outDir: 'dist/renderer'
     },
     resolve: {
       alias: {
