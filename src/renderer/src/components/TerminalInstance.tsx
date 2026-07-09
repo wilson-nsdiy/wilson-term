@@ -9,7 +9,6 @@ import { resolveLogConfig } from '../utils/logConfig'
 import { resolveSettings } from '../utils/settingsResolver'
 import { buildFontFamily } from '../utils/font'
 import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseModeEnabled } from '../utils/pasteFilter'
-import { applyImePatches, removeImePatches } from '../utils/imePatch'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
 import TerminalStatusBar from './TerminalStatusBar'
@@ -203,7 +202,10 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     xterm.open(terminalRef.current)
     fitAddon.fit()
-    applyImePatches(xterm)
+
+    // #5881: DOM 渲染器在 .xterm-rows 上设了 aria-hidden，终端输出对屏幕阅读器不可见。
+    // 该缺陷在 v5.5.0 与 v6.0.0 均存在（上游 open 未修），运行时移除即可，无可见副作用。
+    xterm.element?.querySelector('.xterm-rows')?.removeAttribute('aria-hidden')
 
     if (resolved.backgroundImage) {
       xterm.element?.classList.add('xterm-bg-image')
@@ -332,7 +334,6 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       window.removeEventListener('resize', handleResize)
       xtermElement?.removeEventListener('compositionend', handleCompositionEnd)
       compositionMo?.disconnect()
-      removeImePatches(xterm)
       terminalRef.current?.removeEventListener('contextmenu', handleContextMenu)
       selectionChangeDisposable.dispose()
       searchResultDisposable.dispose()
@@ -429,6 +430,18 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
           updateSessionStatus(sessionId, 'connecting')
           const resolvedLogConfig = resolveLogConfig(config.logConfig, useAppStore.getState().settings)
           const doConnect = async () => {
+            // 先尝试在现有连接上重新打开（SSH 可复用底层连接，无需重新认证）
+            try {
+              await window.api.connection.reopen(sessionId)
+              // reopen 成功后同步终端尺寸到新 shell
+              if (config.type !== 'serial') {
+                window.api.connection.resize(sessionId, xterm.cols, xterm.rows)
+              }
+              updateSessionStatus(sessionId, 'connected')
+              return
+            } catch {
+              // reopen 失败（连接类型不支持或客户端已断开），回退到完整重连
+            }
             try {
               await window.api.connection.disconnect(sessionId)
             } catch {

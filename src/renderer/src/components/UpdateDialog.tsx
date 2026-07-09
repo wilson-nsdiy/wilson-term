@@ -69,12 +69,6 @@ const UpdateDialog: React.FC<UpdateDialogProps> = ({ open, onClose }) => {
                     <span className="text-xs text-gray-500">{snapshot.info.releaseDate.split('T')[0]}</span>
                   )}
                 </div>
-                {snapshot.info.releaseNotes && (
-                  <div className="bg-gray-900 rounded p-2.5">
-                    <p className="text-xs font-medium text-gray-400 mb-1">更新内容</p>
-                    <p className="text-xs text-gray-300 whitespace-pre-wrap">{snapshot.info.releaseNotes}</p>
-                  </div>
-                )}
                 {snapshot.status === 'downloading' && snapshot.progress && (
                   <div>
                     <div className="w-full bg-gray-700 rounded-full h-2">
@@ -88,13 +82,18 @@ const UpdateDialog: React.FC<UpdateDialogProps> = ({ open, onClose }) => {
                     </p>
                   </div>
                 )}
+                {snapshot.info.releaseNotes && (
+                  <div className="bg-gray-900 rounded p-2.5">
+                    <p className="text-xs font-medium text-gray-400 mb-1">更新内容</p>
+                    <div className="max-h-60 overflow-y-auto">
+                      <p className="text-xs text-gray-300 whitespace-pre-wrap">{snapshot.info.releaseNotes}</p>
+                    </div>
+                  </div>
+                )}
                 {snapshot.status === 'downloaded' && (
                   <div className="flex items-center gap-2 text-sm text-green-400">
                     <span>✓</span>
                     <span>更新已下载完成，可立即安装</span>
-                    {snapshot.autoInstallCountdown != null && snapshot.autoInstallCountdown > 0 && (
-                      <span className="text-xs text-yellow-400">({snapshot.autoInstallCountdown}s)</span>
-                    )}
                   </div>
                 )}
               </div>
@@ -121,16 +120,9 @@ const UpdateDialog: React.FC<UpdateDialogProps> = ({ open, onClose }) => {
             </button>
           )}
           {snapshot?.status === 'downloaded' && (
-            <>
-              {snapshot.autoInstallCountdown != null && snapshot.autoInstallCountdown > 0 && (
-                <button onClick={() => window.api.app.cancelAutoInstall()} className="px-4 py-1.5 bg-gray-600 hover:bg-gray-500 rounded text-sm text-white transition-colors">
-                  稍后安装
-                </button>
-              )}
-              <button onClick={() => window.api.app.installUpdate()} className="px-4 py-1.5 bg-green-600 hover:bg-green-700 rounded text-sm text-white transition-colors">
-                安装并重启
-              </button>
-            </>
+            <button onClick={() => window.api.app.installUpdate()} className="px-4 py-1.5 bg-green-600 hover:bg-green-700 rounded text-sm text-white transition-colors">
+              安装并重启
+            </button>
           )}
           <button onClick={handleCheck} disabled={snapshot?.status === 'checking' || snapshot?.status === 'downloading'} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded text-sm text-white transition-colors">
             {snapshot?.status === 'checking' ? '检查中...' : '检查更新'}
