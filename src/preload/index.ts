@@ -24,6 +24,7 @@ const api = {
   connection: {
     connect: (config: unknown, logConfig?: unknown) => ipcRenderer.invoke('connection:connect', config, logConfig),
     disconnect: (sessionId: string) => ipcRenderer.invoke('connection:disconnect', sessionId),
+    reopen: (sessionId: string) => ipcRenderer.invoke('connection:reopen', sessionId),
     write: (sessionId: string, data: string) => ipcRenderer.send('connection:write', sessionId, data),
     resize: (sessionId: string, cols: number, rows: number) =>
       ipcRenderer.send('connection:resize', sessionId, cols, rows),
@@ -140,7 +141,6 @@ const api = {
     checkUpdate: (force?: boolean) => ipcRenderer.invoke('app:check-update', force),
     downloadUpdate: () => ipcRenderer.invoke('app:download-update'),
     installUpdate: () => ipcRenderer.invoke('app:install-update'),
-    cancelAutoInstall: () => ipcRenderer.invoke('app:cancel-auto-install'),
     getUpdateStatus: () => ipcRenderer.invoke('app:get-update-status'),
     getIgnoredVersions: () => ipcRenderer.invoke('app:get-ignored-versions'),
     saveIgnoredVersions: (versions: string[]) => ipcRenderer.invoke('app:save-ignored-versions', versions),

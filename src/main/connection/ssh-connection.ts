@@ -217,6 +217,10 @@ export class SSHConnection extends BaseConnection {
 
   private client: Client | null = null
   private channel: import('ssh2').ClientChannel | null = null
+  private intentionalDisconnect = false
+  private autoCleanupTimer: ReturnType<typeof setTimeout> | null = null
+  private reopening = false
+  private streamCloseHandled = false
 
   constructor(options: ConnectionOptions) {
     super(options)
@@ -356,6 +360,11 @@ export class SSHConnection extends BaseConnection {
       this.client = client
 
       const cleanup = (): void => {
+        if (this.autoCleanupTimer) {
+          clearTimeout(this.autoCleanupTimer)
+          this.autoCleanupTimer = null
+        }
+        this.streamCloseHandled = true
         void logManager.closeLogger(this.sessionId)
         this.channel = null
         this.client = null
@@ -418,32 +427,7 @@ export class SSHConnection extends BaseConnection {
             return
           }
 
-          this.channel = stream
-          activeClients.set(this.sessionId, client)
-          connectionInstances.set(this.sessionId, this)
-
-          if (logConfig && logConfig.logEnabled) {
-            logManager.createLogger(this.sessionId, logConfig, config)
-          }
-
-          stream.on('data', (data: Buffer) => {
-            const s = decodeBufferForTerminal(data)
-            logManager.write(this.sessionId, 'output', s)
-            this.bufferData(s)
-          })
-
-          stream.stderr.on('data', (data: Buffer) => {
-            const s = decodeBufferForTerminal(data)
-            logManager.write(this.sessionId, 'output', s)
-            this.bufferData(s)
-          })
-
-          stream.on('close', () => {
-            this.flushRemaining()
-            this.channel = null
-            this.client?.end()
-          })
-
+          this.setupShellStream(stream)
           this.fulfilled = true
           resolve()
         })
@@ -486,7 +470,126 @@ export class SSHConnection extends BaseConnection {
     })
   }
 
+  private setupShellStream(stream: import('ssh2').ClientChannel, skipDisconnectNotify = false): void {
+    if (this.autoCleanupTimer) {
+      clearTimeout(this.autoCleanupTimer)
+      this.autoCleanupTimer = null
+    }
+    this.streamCloseHandled = false
+    this.channel = stream
+    activeClients.set(this.sessionId, this.client!)
+    connectionInstances.set(this.sessionId, this)
+
+    const logConfig = this.options.logConfig
+    const config = this.options.config as SSHConfig
+    if (logConfig && logConfig.logEnabled) {
+      logManager.createLogger(this.sessionId, logConfig, config)
+    }
+
+    stream.on('data', (data: Buffer) => {
+      const s = decodeBufferForTerminal(data)
+      logManager.write(this.sessionId, 'output', s)
+      this.bufferData(s)
+    })
+
+    stream.stderr.on('data', (data: Buffer) => {
+      const s = decodeBufferForTerminal(data)
+      logManager.write(this.sessionId, 'output', s)
+      this.bufferData(s)
+    })
+
+    stream.on('close', () => {
+      if (this.streamCloseHandled) return
+      this.streamCloseHandled = true
+      this.flushRemaining()
+      this.channel = null
+      cleanupSFTP(this.sessionId)
+      void logManager.closeLogger(this.sessionId)
+      if (this.client && !this.intentionalDisconnect && !skipDisconnectNotify) {
+        this.statusSent = false
+        this.emitStatus('disconnected')
+        this.autoCleanupTimer = setTimeout(() => {
+          this.autoCleanupTimer = null
+          if (this.client) {
+            this.intentionalDisconnect = true
+            this.client.end()
+          }
+        }, 30000)
+      }
+    })
+
+    stream.on('error', (err: Error) => {
+      appLogger.error('SSH', `Channel stream error [${this.sessionId}]: ${err.message}`)
+    })
+  }
+
+  async reopen(): Promise<void> {
+    if (this.reopening) {
+      throw new Error('正在重连中')
+    }
+    this.reopening = true
+    try {
+      if (this.autoCleanupTimer) {
+        clearTimeout(this.autoCleanupTimer)
+        this.autoCleanupTimer = null
+      }
+      if (!this.client) {
+        throw new Error('SSH 客户端未连接')
+      }
+      this.intentionalDisconnect = false
+      this.statusSent = false
+
+      const client = this.client
+      return new Promise<void>((resolve, reject) => {
+        let settled = false
+        const finish = (fn: () => void): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          client.off('error', onClientGone)
+          client.off('close', onClientGone)
+          fn()
+        }
+
+        const onClientGone = (): void => {
+          finish(() => reject(new Error('SSH 连接已断开')))
+        }
+        client.once('error', onClientGone)
+        client.once('close', onClientGone)
+
+        const timer = setTimeout(() => {
+          finish(() => reject(new Error('重新打开 shell 超时')))
+        }, 10000)
+
+        client.shell({ rows: 24, cols: 80, term: 'xterm-256color' }, (err, stream) => {
+          if (err) {
+            finish(() => reject(new Error(`创建 shell 失败: ${err.message}`)))
+            return
+          }
+          if (settled) {
+            stream.destroy()
+            return
+          }
+          this.setupShellStream(stream, true)
+          // reopen 成功后确认 client 仍有效（可能在 shell 创建期间被 disconnect 并发清理）
+          if (!this.client) {
+            finish(() => reject(new Error('SSH 客户端已被断开')))
+            return
+          }
+          finish(() => resolve())
+        })
+      })
+    } finally {
+      this.reopening = false
+    }
+  }
+
   protected async doDisconnect(): Promise<void> {
+    if (this.autoCleanupTimer) {
+      clearTimeout(this.autoCleanupTimer)
+      this.autoCleanupTimer = null
+    }
+    this.intentionalDisconnect = true
     this.statusSent = true
     await logManager.closeLogger(this.sessionId)
     rejectPendingResolvers(this.sessionId, new Error('cancelled'))

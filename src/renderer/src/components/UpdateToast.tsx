@@ -44,7 +44,6 @@ const UpdateToast: React.FC = () => {
 
   const handleDownload = () => window.api.app.downloadUpdate()
   const handleInstall = () => window.api.app.installUpdate()
-  const handleCancelAutoInstall = () => window.api.app.cancelAutoInstall()
   const handleDismiss = () => setDismissed(true)
   const handleSkipVersion = () => {
     if (snapshot.info?.version) {
@@ -127,13 +126,6 @@ const UpdateToast: React.FC = () => {
           </div>
         )}
 
-        {/* 下载完成倒计时 */}
-        {status === 'downloaded' && snapshot.autoInstallCountdown != null && snapshot.autoInstallCountdown > 0 && (
-          <div className="px-4 pb-3">
-            <p className="text-xs text-yellow-400">{snapshot.autoInstallCountdown} 秒后自动安装重启</p>
-          </div>
-        )}
-
         {/* 操作按钮 */}
         <div className="flex justify-end gap-2 px-4 py-2.5 bg-gray-900/40 border-t border-gray-700/50">
           {status === 'available' && (
@@ -159,22 +151,12 @@ const UpdateToast: React.FC = () => {
             </>
           )}
           {status === 'downloaded' && (
-            <>
-              {snapshot.autoInstallCountdown != null && snapshot.autoInstallCountdown > 0 && (
-                <button
-                  onClick={handleCancelAutoInstall}
-                  className="px-3 py-1 text-xs text-gray-400 hover:text-gray-200 transition-colors"
-                >
-                  稍后安装
-                </button>
-              )}
-              <button
-                onClick={handleInstall}
-                className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-xs text-white transition-colors"
-              >
-                立即安装并重启
-              </button>
-            </>
+            <button
+              onClick={handleInstall}
+              className="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-xs text-white transition-colors"
+            >
+              立即安装并重启
+            </button>
           )}
         </div>
       </div>

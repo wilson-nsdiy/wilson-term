@@ -373,7 +373,6 @@ export interface UpdateStatusSnapshot {
   info?: UpdateInfoSnapshot
   progress?: UpdateProgressSnapshot
   error?: string
-  autoInstallCountdown?: number
   /** 是否由用户手动触发检查 */
   manual: boolean
 }
@@ -406,7 +405,6 @@ export interface AppAPI {
   checkUpdate: (force?: boolean) => Promise<UpdateStatusSnapshot>
   downloadUpdate: () => Promise<void>
   installUpdate: () => void
-  cancelAutoInstall: () => void
   getUpdateStatus: () => Promise<UpdateStatusSnapshot>
   getIgnoredVersions: () => Promise<string[]>
   saveIgnoredVersions: (versions: string[]) => Promise<void>
@@ -454,6 +452,7 @@ export interface SFTPAPI {
 export interface ConnectionAPI {
   connect: (config: ConnectionConfig, logConfig?: LogConfig) => Promise<void>
   disconnect: (sessionId: string) => Promise<void>
+  reopen: (sessionId: string) => Promise<void>
   write: (sessionId: string, data: string) => void
   resize: (sessionId: string, cols: number, rows: number) => void
   onData: (callback: (sessionId: string, data: string) => void) => () => void

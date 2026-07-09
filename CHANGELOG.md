@@ -5,12 +5,22 @@ All notable changes to Wilson Term will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v0.9.10] - 2026-07-08
+## [v0.10.0] - 2026-07-09
+
+### Added
+
+- SSH 连接复用重连（reopen），断开时复用底层连接无需重新认证
+
+### Changed
+
+- 简化更新流程，移除自动安装倒计时
+- 存储写入异步化，增强连接断开与错误处理健壮性
+- 回退 xterm.js 至 v5.5.0，移除 v6 已知问题的变通方案
 
 ### Fixed
 
-- 日志目录改为用户可写路径，避免 Program Files UAC 限制导致日志写入失败
-- 修复已知 Bugs
+- 修复 xterm.js v6.0.0 已知缺陷（#5800/#5801/#5881）
+- 改进日志落盘可靠性与连接断开健壮性
 
 ## [v0.9.9] - 2026-07-03
 

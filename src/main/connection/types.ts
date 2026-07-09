@@ -10,6 +10,7 @@ export interface TerminalConnection {
   disconnect(): Promise<void>
   write(data: string): void
   resize?(cols: number, rows: number): void
+  reopen?(): Promise<void>
 }
 
 /** 连接状态变更回调 */
