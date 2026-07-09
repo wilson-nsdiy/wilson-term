@@ -9,7 +9,6 @@ import { resolveLogConfig } from '../utils/logConfig'
 import { resolveSettings } from '../utils/settingsResolver'
 import { buildFontFamily } from '../utils/font'
 import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseModeEnabled } from '../utils/pasteFilter'
-import { applyImePatches, removeImePatches } from '../utils/imePatch'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
 import TerminalStatusBar from './TerminalStatusBar'
@@ -171,7 +170,6 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       lineHeight: resolved.lineHeight,
       letterSpacing: resolved.letterSpacing,
       scrollback: resolved.scrollback,
-      scrollOnEraseInDisplay: true, // #5801: ED2 改为下滚，避免 AI CLI 流式重绘抖屏
       theme: {
         background: '#00000000',
         foreground: resolved.foreground,
@@ -204,10 +202,6 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     xterm.open(terminalRef.current)
     fitAddon.fit()
-    applyImePatches(xterm)
-
-    // #5881: DOM 渲染器行容器被 aria-hidden 屏蔽，屏幕阅读器不可读
-    xterm.element?.querySelector('.xterm-rows')?.removeAttribute('aria-hidden')
 
     if (resolved.backgroundImage) {
       xterm.element?.classList.add('xterm-bg-image')
@@ -336,7 +330,6 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       window.removeEventListener('resize', handleResize)
       xtermElement?.removeEventListener('compositionend', handleCompositionEnd)
       compositionMo?.disconnect()
-      removeImePatches(xterm)
       terminalRef.current?.removeEventListener('contextmenu', handleContextMenu)
       selectionChangeDisposable.dispose()
       searchResultDisposable.dispose()
