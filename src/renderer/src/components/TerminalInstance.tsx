@@ -203,6 +203,10 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     xterm.open(terminalRef.current)
     fitAddon.fit()
 
+    // #5881: DOM 渲染器在 .xterm-rows 上设了 aria-hidden，终端输出对屏幕阅读器不可见。
+    // 该缺陷在 v5.5.0 与 v6.0.0 均存在（上游 open 未修），运行时移除即可，无可见副作用。
+    xterm.element?.querySelector('.xterm-rows')?.removeAttribute('aria-hidden')
+
     if (resolved.backgroundImage) {
       xterm.element?.classList.add('xterm-bg-image')
     }

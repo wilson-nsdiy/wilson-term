@@ -514,7 +514,7 @@ export class SSHConnection extends BaseConnection {
             this.intentionalDisconnect = true
             this.client.end()
           }
-        }, 60000)
+        }, 30000)
       }
     })
 
