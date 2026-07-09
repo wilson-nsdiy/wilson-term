@@ -165,19 +165,21 @@ class SessionLogger {
     }
   }
 
-  /** 异步关闭流并等待 finish，带 1s 兜底 */
+  /** 异步关闭流并等待 finish，带 1s 兜底；无论哪条路径触发都会移除监听器，避免句柄泄漏 */
   private closeStreamAsync(): Promise<void> {
     const stream = this.writeStream
     this.writeStream = null
     if (!stream) return Promise.resolve()
     return new Promise<void>((resolve) => {
-      const guard = setTimeout(() => resolve(), 1000)
-      const done = (): void => {
+      const finish = (): void => {
         clearTimeout(guard)
+        stream.off('close', finish)
+        stream.off('error', finish)
         resolve()
       }
-      stream.on('close', done)
-      stream.on('error', done)
+      const guard = setTimeout(finish, 1000)
+      stream.on('close', finish)
+      stream.on('error', finish)
       stream.end()
     })
   }
