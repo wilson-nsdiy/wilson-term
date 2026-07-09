@@ -3,7 +3,7 @@ export type ConnectionType = 'ssh' | 'serial' | 'telnet' | 'bash'
 
 import type { Profile, ProfileOverrides } from './profile'
 export type { Profile, ProfileOverrides }
-export type { PluginPermission, PluginManifest, PluginRegistryEntry, PluginStatusBarItem, PluginMenuItem, PluginContext, PluginLifecycle, MainPlugin, RendererPlugin, PluginDefinition, PluginImportResult, PluginExportResult, PluginListItem, PluginAPI } from './plugin'
+export type { PluginPermission, PluginManifest, PluginRegistryEntry, PluginStatusBarItem, PluginContext, PluginLifecycle, MainPlugin, RendererPlugin, PluginDefinition, PluginImportResult, PluginExportResult, PluginListItem, PluginAPI } from './plugin'
 
 /** 键盘锁状态 */
 export interface KeyboardLockState {
