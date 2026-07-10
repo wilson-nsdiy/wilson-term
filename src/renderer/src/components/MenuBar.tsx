@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { useAppStore } from '../store'
-import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import AboutDialog from './AboutDialog'
 import UpdateDialog from './UpdateDialog'
 import GlobalOptionsDialog from './GlobalOptionsDialog'
@@ -216,10 +215,6 @@ const MenuBar: React.FC = () => {
     {
       label: '工具',
       items: [
-        ...rendererPluginHost.collectMenuItems().map(item => ({
-          label: item.label, checked: item.checked, disabled: item.disabled, onClick: item.onClick,
-        })),
-        ...(rendererPluginHost.collectMenuItems().length > 0 ? [{ separator: true } as MenuItemDef] : []),
         {
           label: '定时任务',
           onClick: () => {
