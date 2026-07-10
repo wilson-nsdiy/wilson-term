@@ -14,7 +14,8 @@
     "package": "electron-vite build && electron-builder",
     "package:beta": "node scripts/package-beta.js",
     "lint": "eslint . --ext .ts,.tsx",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "node scripts/patch-xterm.js"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
@@ -48,6 +49,7 @@
     "electron-builder": "^25.1.8",
     "electron-vite": "^5.0.0",
     "eslint": "^10.6.0",
+    "patch-package": "^8.0.1",
     "png-to-ico": "^3.0.1",
     "postcss": "^8.4.49",
     "react": "^18.3.1",
