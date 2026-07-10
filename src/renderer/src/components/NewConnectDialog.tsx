@@ -497,23 +497,6 @@ const NewConnectDialog: React.FC<NewConnectDialogProps> = ({
                 )}
               </div>
 
-            {/* Profile 选择 */}
-            <div className="mt-4 border-t border-gray-700 pt-3">
-              <label className="block text-sm text-gray-400 mb-1">配置模板</label>
-              <select
-                value={selectedProfileId}
-                onChange={(e) => setSelectedProfileId(e.target.value)}
-                className={inputClass}
-              >
-                <option value="">无（使用全局默认）</option>
-                {profiles
-                  .filter((p) => p.appliesTo.length === 0 || p.appliesTo.includes(activeTab))
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-              </select>
-            </div>
-
             {/* 高级（折叠面板） */}
             <div className="mt-4 border-t border-gray-700 pt-3">
               <button

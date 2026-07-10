@@ -53,7 +53,7 @@ Wilson Term 基于 Electron，插件代码分布在两个进程中：
 │  ┌───────────────┐  ┌──────────────────────────────┐ │
 │  │RendererHost   │  │ 渲染进程插件 (renderer.js)   │ │
 │  │  - 沙箱加载    │  │  - 监听终端输入/输出         │ │
-│  │  - 回调分发    │  │  - 声明式 UI（状态栏/菜单）  │ │
+│  │  - 回调分发    │  │  - 声明式 UI（状态栏）       │ │
 │  │  - 生命周期    │  │  - 会话生命周期响应          │ │
 │  └───────────────┘  └──────────────────────────────┘ │
 └─────────────────────────────────────────────────────┘
@@ -176,17 +176,6 @@ export default class MyRendererPlugin implements RendererPlugin {
     }
   }
 
-  menuItems() {
-    return [{
-      label: '我的插件',
-      checked: this.enabled,
-      onClick: () => {
-        this.enabled = !this.enabled
-        this.ctx.storage.set('enabled', this.enabled)
-      },
-    }]
-  }
-
   async deactivate(): Promise<void> {
     // 清理所有资源
   }
@@ -303,14 +292,13 @@ const result = await window.api.plugin.invoke('plugin:my-plugin:fetch-key', arg)
 
 - 监听终端输入/输出数据流
 - 响应会话生命周期事件
-- 声明式 UI（状态栏项、菜单项）
+- 声明式 UI（状态栏项）
 
 ### 接口定义
 
 ```typescript
 interface RendererPlugin extends PluginLifecycle {
   statusBarItem?(sessionId: string): PluginStatusBarItem | null
-  menuItems?(): PluginMenuItem[]
 }
 ```
 
@@ -461,7 +449,6 @@ ctx.logger.error(msg: string): void
 | 方法 | 调用时机 | 说明 |
 |------|---------|------|
 | `statusBarItem(sessionId)` | 状态栏渲染时 | 返回声明式状态栏项或 `null` |
-| `menuItems()` | 菜单渲染时 | 返回声明式菜单项数组 |
 
 ### 生命周期流程
 
@@ -498,11 +485,9 @@ ctx.logger.error(msg: string): void
 
 ---
 
-## 声明式 UI
+## 声明式 UI（状态栏项）
 
-插件不直接渲染 React 组件，而是返回数据结构由宿主渲染。
-
-### 状态栏项
+插件不直接渲染 React 组件，而是返回数据结构由宿主渲染。当前支持状态栏项：
 
 ```typescript
 interface PluginStatusBarItem {
@@ -529,31 +514,7 @@ statusBarItem(sessionId: string) {
 }
 ```
 
-### 菜单项
-
-```typescript
-interface PluginMenuItem {
-  label: string
-  checked?: boolean
-  disabled?: boolean
-  onClick: () => void
-}
-```
-
-示例：
-
-```typescript
-menuItems() {
-  return [{
-    label: '插件示例',
-    checked: this.enabled,
-    onClick: () => {
-      this.enabled = !this.enabled
-      this.ctx.storage.set('enabled', this.enabled)
-    },
-  }]
-}
-```
+> **能力边界**：状态栏项仅用于展示，不支持点击等交互。早期版本的 `menuItems()`（插件菜单项）已移除，宿主不再调用该方法——请不要在 `RendererPlugin` 中实现 `menuItems()`，它不会被渲染。若插件需要可由用户切换的运行时状态（如启用/禁用开关），应通过自身的存储 API 持久化，并由插件自行在 `activate()` 中读取后控制内部逻辑；宿主侧的插件管理器开关仅控制插件整体的加载与卸载，与插件内部运行时状态相互独立。
 
 ---
 
@@ -871,7 +832,6 @@ docs/plugin-demo/
 ### 功能说明
 
 - **状态栏指示器** — 在状态栏显示 `DEMO` 标签，提示插件已启用
-- **菜单项** — 通过菜单切换插件启用/禁用状态
 - **终端交互** — 检测终端输入 `hello` 时自动回复
 - **IPC 通信** — 演示渲染进程通过 IPC 调用主进程功能
 
@@ -882,7 +842,7 @@ docs/plugin-demo/
   "id": "plugin-demo",
   "name": "插件示例",
   "version": "1.0.0",
-  "description": "Wilson Term 插件开发示例，展示主进程 IPC 和渲染进程状态栏/菜单功能",
+  "description": "Wilson Term 插件开发示例，展示主进程 IPC 和渲染进程状态栏功能",
   "main": "main.js",
   "renderer": "renderer.js",
   "permissions": [
@@ -931,7 +891,7 @@ export default <MainPlugin>{
 ### 渲染进程插件 (src/renderer.ts)
 
 ```typescript
-import type { RendererPlugin, PluginContext, PluginStatusBarItem, PluginMenuItem } from './plugin-types'
+import type { RendererPlugin, PluginContext, PluginStatusBarItem } from './plugin-types'
 
 export default class DemoRendererPlugin implements RendererPlugin {
   private ctx!: PluginContext
@@ -973,48 +933,6 @@ export default class DemoRendererPlugin implements RendererPlugin {
       style: { backgroundColor: '#2a4a7a', color: '#89d4fa' },
       tooltip: `插件示例已启用 | 检测到 ${this.inputCount} 次输出`
     }
-  }
-
-  menuItems(): PluginMenuItem[] {
-    return [
-      {
-        label: '插件示例',
-        checked: this.enabled,
-        onClick: () => {
-          this.enabled = !this.enabled
-          this.ctx.storage.set('enabled', this.enabled)
-        }
-      },
-      {
-        label: '获取服务端时间',
-        disabled: false,
-        onClick: async () => {
-          try {
-            const result = await (window as any).api.plugin.invoke(
-              'plugin:plugin-demo:get-time'
-            ) as { iso: string; locale: string; timestamp: number }
-            alert(`服务端时间:\n${result.locale}`)
-          } catch (err) {
-            alert(`获取时间失败: ${err}`)
-          }
-        }
-      },
-      {
-        label: '测试 Echo',
-        disabled: false,
-        onClick: async () => {
-          try {
-            const result = await (window as any).api.plugin.invoke(
-              'plugin:plugin-demo:echo',
-              '你好'
-            ) as string
-            alert(result)
-          } catch (err) {
-            alert(`Echo 失败: ${err}`)
-          }
-        }
-      }
-    ]
   }
 
   async deactivate(): Promise<void> {

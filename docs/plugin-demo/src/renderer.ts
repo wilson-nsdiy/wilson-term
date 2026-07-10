@@ -1,4 +1,4 @@
-import type { RendererPlugin, PluginContext, PluginStatusBarItem, PluginMenuItem } from './plugin-types'
+import type { RendererPlugin, PluginContext, PluginStatusBarItem } from './plugin-types'
 
 /**
  * 渲染进程插件
@@ -64,52 +64,6 @@ export default class DemoRendererPlugin implements RendererPlugin {
       },
       tooltip: `插件示例已启用 | 检测到 ${this.inputCount} 次输出`
     }
-  }
-
-  /**
-   * 声明菜单项
-   * 返回的菜单项会出现在插件专属菜单中
-   */
-  menuItems(): PluginMenuItem[] {
-    return [
-      {
-        label: '插件示例',
-        checked: this.enabled,
-        onClick: () => {
-          this.enabled = !this.enabled
-          this.ctx.storage.set('enabled', this.enabled)
-        }
-      },
-      {
-        label: '获取服务端时间',
-        disabled: false,
-        onClick: async () => {
-          try {
-            const result = await (window as any).api.plugin.invoke(
-              'plugin:plugin-demo:get-time'
-            ) as { iso: string; locale: string; timestamp: number }
-            alert(`服务端时间:\n${result.locale}`)
-          } catch (err) {
-            alert(`获取时间失败: ${err}`)
-          }
-        }
-      },
-      {
-        label: '测试 Echo',
-        disabled: false,
-        onClick: async () => {
-          try {
-            const result = await (window as any).api.plugin.invoke(
-              'plugin:plugin-demo:echo',
-              '你好'
-            ) as string
-            alert(result)
-          } catch (err) {
-            alert(`Echo 失败: ${err}`)
-          }
-        }
-      }
-    ]
   }
 
   async deactivate(): Promise<void> {
