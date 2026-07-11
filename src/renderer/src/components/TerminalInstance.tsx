@@ -10,6 +10,7 @@ import { resolveLogConfig } from '../utils/logConfig'
 import { resolveSettings } from '../utils/settingsResolver'
 import { buildFontFamily } from '../utils/font'
 import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseModeEnabled } from '../utils/pasteFilter'
+import { FlowControl, PinnedScroll, RendererManager } from '../utils/xtermEnhancements'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
 import TerminalStatusBar from './TerminalStatusBar'
@@ -28,6 +29,10 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
+  /** 自定义跟随底部滚动状态管理器 */
+  const pinnedScrollRef = useRef<PinnedScroll | null>(null)
+  /** 渲染器管理器（WebGL/Canvas 加速 + GPU 上下文恢复） */
+  const rendererManagerRef = useRef<RendererManager | null>(null)
   /** 数据订阅的取消函数 */
   const unsubscribeRef = useRef<(() => void) | null>(null)
   /** xterm 输入监听的销毁函数 */
@@ -90,13 +95,13 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
   /** 绑定统一连接数据流到 xterm */
   const bindConnection = useCallback((sid: string, xterm: XTerm) => {
-    // 订阅连接数据，写入 xterm
+    // 订阅连接数据，写入 xterm（经 PinnedScroll 维护滚动位置 + FlowControl 背压）
     const unsub = window.api.connection.onData((dataSid, data) => {
       if (dataSid === sid && xtermRef.current) {
         const { sessions } = useAppStore.getState()
         if (sessions.some((s) => s.id === dataSid)) {
           rendererPluginHost.feedOutput(sid, data)
-          xtermRef.current.write(data)
+          pinnedScrollRef.current?.write(data)
         }
       }
     })
@@ -117,8 +122,8 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
           useAppStore.getState().writeSessionError(sid, errMsg)
         }
         if (status === 'disconnected' && xtermRef.current) {
-          xtermRef.current.writeln('\r\n\x1b[31m连接已断开\x1b[0m')
-          xtermRef.current.writeln('\x1b[33m按 R 键重新连接\x1b[0m')
+          // 通过 writeBanner 写入，保证与远端数据流的顺序一致并强制滚到底部
+          pinnedScrollRef.current?.writeBanner('\r\n\x1b[31m连接已断开\x1b[0m\r\n\x1b[33m按 R 键重新连接\x1b[0m\r\n')
         }
       }
     })
@@ -207,6 +212,19 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     xterm.open(terminalRef.current)
     fitAddon.fit()
+
+    // 初始化写入背压控制器，并交给 PinnedScroll 持有
+    const flowControl = new FlowControl(xterm)
+
+    // 初始化自定义跟随底部滚动管理器，并接管滚轮解 pin
+    const pinnedScroll = new PinnedScroll(xterm, flowControl)
+    pinnedScroll.attach(terminalRef.current)
+    pinnedScrollRef.current = pinnedScroll
+
+    // 加载加速渲染器：优先 WebGL，失败回退 Canvas，再回退 DOM
+    const rendererManager = new RendererManager(xterm, terminalRef.current, resolved.renderer)
+    rendererManager.attach()
+    rendererManagerRef.current = rendererManager
 
     // #5881: DOM 渲染器在 .xterm-rows 上设了 aria-hidden，终端输出对屏幕阅读器不可见。
     // 该缺陷在 v5.5.0 与 v6.0.0 均存在（上游 open 未修），运行时移除即可，无可见副作用。
@@ -303,9 +321,29 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     }
     terminalRef.current.addEventListener('contextmenu', handleContextMenu)
 
-    // 窗口大小变化时自适应
+    // 窗口大小变化时自适应（节流 + 保持滚动位置）
+    const RESIZE_MIN_INTERVAL = 32
+    let resizePending = false
+    let lastResize = 0
+    const runResize = () => {
+      resizePending = false
+      lastResize = Date.now()
+      const fit = () => fitAddon.fit()
+      if (pinnedScrollRef.current) {
+        pinnedScrollRef.current.withScrollPreservation(fit, true)
+      } else {
+        fit()
+      }
+    }
     const handleResize = () => {
-      fitAddon.fit()
+      if (resizePending) return
+      resizePending = true
+      const wait = Math.max(0, RESIZE_MIN_INTERVAL - (Date.now() - lastResize))
+      if (wait > 0) {
+        setTimeout(() => requestAnimationFrame(runResize), wait)
+      } else {
+        requestAnimationFrame(runResize)
+      }
     }
     window.addEventListener('resize', handleResize)
 
@@ -332,7 +370,15 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       : null
     compositionMo?.observe(compositionView, { attributes: true, attributeFilter: ['style'] })
 
-    const handleCompositionEnd = () => fitAddon.fit()
+    const handleCompositionEnd = () => {
+      // IME 组合结束后 fit，保持滚动位置与其他 fit 路径一致
+      const fit = () => fitAddon.fit()
+      if (pinnedScrollRef.current) {
+        pinnedScrollRef.current.withScrollPreservation(fit, true)
+      } else {
+        fit()
+      }
+    }
     xtermElement?.addEventListener('compositionend', handleCompositionEnd)
 
     return () => {
@@ -343,6 +389,27 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       selectionChangeDisposable.dispose()
       searchResultDisposable.dispose()
       unbindData()
+
+      // 清理增强器（按依赖顺序：先 PinnedScroll 再 RendererManager，最后 xterm）
+      try {
+        if (pinnedScrollRef.current && terminalRef.current) {
+          pinnedScrollRef.current.detach(terminalRef.current)
+          pinnedScrollRef.current.dispose()
+        }
+      } catch (e) {
+        console.error('[TerminalInstance] 清理 PinnedScroll 失败:', e)
+      } finally {
+        pinnedScrollRef.current = null
+      }
+
+      try {
+        rendererManagerRef.current?.dispose()
+      } catch (e) {
+        console.error('[TerminalInstance] 清理 RendererManager 失败:', e)
+      } finally {
+        rendererManagerRef.current = null
+      }
+
       xterm.dispose()
       xtermRef.current = null
       fitAddonRef.current = null
@@ -395,13 +462,13 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     if (sessionStatus === 'connecting') {
       if (sessionConfig.type === 'serial') {
-        xterm.writeln(`\x1b[32m正在打开串口 ${sessionConfig.path} (${sessionConfig.baudRate}bps)...\x1b[0m`)
+        pinnedScrollRef.current?.writeBanner(`\x1b[32m正在打开串口 ${sessionConfig.path} (${sessionConfig.baudRate}bps)...\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'ssh') {
-        xterm.writeln(`\x1b[34m正在连接 ${sessionConfig.username}@${sessionConfig.host}:${sessionConfig.port}...\x1b[0m`)
+        pinnedScrollRef.current?.writeBanner(`\x1b[34m正在连接 ${sessionConfig.username}@${sessionConfig.host}:${sessionConfig.port}...\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'telnet') {
-        xterm.writeln(`\x1b[35m正在连接 Telnet ${sessionConfig.host}:${sessionConfig.port}...\x1b[0m`)
+        pinnedScrollRef.current?.writeBanner(`\x1b[35m正在连接 Telnet ${sessionConfig.host}:${sessionConfig.port}...\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'bash') {
-        xterm.writeln(`\x1b[33m正在启动本地终端...\x1b[0m`)
+        pinnedScrollRef.current?.writeBanner(`\x1b[33m正在启动本地终端...\x1b[0m\r\n`)
       }
     } else if (sessionStatus === 'connected') {
       // 连接成功后，主动同步终端真实尺寸到 PTY（串口不需要）
@@ -409,17 +476,16 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
         window.api.connection.resize(sessionId, xterm.cols, xterm.rows)
       }
       if (sessionConfig.type === 'serial') {
-        xterm.writeln(`\x1b[32m串口 ${sessionConfig.path} 已成功打开\x1b[0m`)
+        pinnedScrollRef.current?.writeBanner(`\x1b[32m串口 ${sessionConfig.path} 已成功打开\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'ssh') {
-        xterm.writeln(`\x1b[32m已成功连接到 ${sessionConfig.username}@${sessionConfig.host}:${sessionConfig.port}\x1b[0m`)
+        pinnedScrollRef.current?.writeBanner(`\x1b[32m已成功连接到 ${sessionConfig.username}@${sessionConfig.host}:${sessionConfig.port}\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'telnet') {
-        xterm.writeln(`\x1b[32m已成功连接到 Telnet ${sessionConfig.host}:${sessionConfig.port}\x1b[0m`)
+        pinnedScrollRef.current?.writeBanner(`\x1b[32m已成功连接到 Telnet ${sessionConfig.host}:${sessionConfig.port}\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'bash') {
-        xterm.writeln(`\x1b[32m本地终端已启动\x1b[0m`)
+        pinnedScrollRef.current?.writeBanner(`\x1b[32m本地终端已启动\x1b[0m\r\n`)
       }
     } else if (sessionStatus === 'error' && sessionErrorMessage) {
-      xterm.writeln(`\r\n\x1b[31m连接失败: ${sessionErrorMessage}\x1b[0m`)
-      xterm.writeln(`\x1b[33m按 R 键重新连接\x1b[0m`)
+      pinnedScrollRef.current?.writeBanner(`\r\n\x1b[31m连接失败: ${sessionErrorMessage}\x1b[0m\r\n\x1b[33m按 R 键重新连接\x1b[0m\r\n`)
     }
 
     // 断开或错误状态时注册 R 键重连监听
@@ -472,7 +538,15 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     if (visible) {
       // 延迟一帧确保 DOM 已显示
       requestAnimationFrame(() => {
-        fitAddonRef.current?.fit()
+        // 标签页重新可见时恢复可能丢失的 GPU 渲染器上下文
+        rendererManagerRef.current?.reactivate()
+        // fit 并保持滚动位置（pinnedScroll 不可用时仍保证 fit 执行）
+        const fit = () => fitAddonRef.current?.fit()
+        if (pinnedScrollRef.current) {
+          pinnedScrollRef.current.withScrollPreservation(fit, true)
+        } else {
+          fit()
+        }
         xtermRef.current?.focus()
       })
     }
@@ -495,8 +569,50 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     if (xterm.options.theme) {
       xterm.options.theme = { ...xterm.options.theme, background: r.backgroundImage ? '#00000000' : r.background, foreground: r.foreground }
     }
-    fitAddonRef.current?.fit()
+    // 字体变化会改变单元尺寸，fit 时保持滚动位置（pinnedScroll 不可用时仍保证 fit 执行）
+    const fit = () => fitAddonRef.current?.fit()
+    if (pinnedScrollRef.current) {
+      pinnedScrollRef.current.withScrollPreservation(fit, true)
+    } else {
+      fit()
+    }
   }, [settings.fontSize, settings.fontFamily, settings.fontWeight, settings.fontWeightBold, settings.lineHeight, settings.letterSpacing, settings.cursorStyle, settings.cursorBlink, settings.scrollback, settings.background, settings.foreground, sessionProfileId, sessionOverrides, profiles])
+
+  // 性能监控：定期检查背压与渲染器状态
+  useEffect(() => {
+    const MONITOR_INTERVAL = 30000 // 30秒检查一次
+    const timer = setInterval(() => {
+      try {
+        const flowStats = pinnedScrollRef.current?.['flowControl']?.getStats()
+        const scrollStats = pinnedScrollRef.current?.getStats()
+        const rendererStats = rendererManagerRef.current?.getStats()
+
+        // 背压频繁触发预警
+        if (flowStats && flowStats.blockedWrites > 100) {
+          console.warn('[性能监控] 终端背压触发频繁', {
+            totalWrites: flowStats.totalWrites,
+            blockedWrites: flowStats.blockedWrites,
+            blockedRate: ((flowStats.blockedWrites / flowStats.totalWrites) * 100).toFixed(2) + '%',
+            maxPending: flowStats.maxPendingCallbacks
+          })
+        }
+
+        // 写入错误监控
+        if (scrollStats && scrollStats.writeErrors > 0) {
+          console.warn('[性能监控] 终端写入发生错误', scrollStats)
+        }
+
+        // GPU 上下文丢失监控
+        if (rendererStats && rendererStats.contextLossEvents > 0) {
+          console.warn('[性能监控] GPU 渲染器状态', rendererStats)
+        }
+      } catch (e) {
+        console.error('[性能监控] 统计收集失败:', e)
+      }
+    }, MONITOR_INTERVAL)
+
+    return () => clearInterval(timer)
+  }, [])
 
   /** 背景图片 data URL 缓存 */
   const [bgImageDataURL, setBgImageDataURL] = useState<string | null>(null)
