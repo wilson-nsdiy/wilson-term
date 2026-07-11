@@ -41,6 +41,12 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   const statusUnsubscribeRef = useRef<(() => void) | null>(null)
   /** 断开后重连输入监听的销毁函数 */
   const reconnectDisposableRef = useRef<{ dispose: () => void } | null>(null)
+  /**
+   * 持有最新的 bindConnection，使绑定 effect 只依赖 sessionId。
+   * 这样即使 bindConnection 引用变化也不会触发解绑→重绑（避免重复订阅 onData/onStatus
+   * 及中间窗口期数据丢失），与"实际不会变，但确保安全"的注释语义对齐。
+   */
+  const bindConnectionRef = useRef<(sid: string, xterm: XTerm) => void>(() => {})
 
   /** 右键菜单状态 */
   const [contextMenu, setContextMenu] = useState<{
@@ -99,9 +105,12 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       pinnedScrollRef.current.writeBanner(text)
     } else if (xtermRef.current) {
       // 兜底分支：与 PinnedScroll.writeBanner 语义对齐，写入后强制滚到底部，
-      // 否则用户回看历史时横幅会落在视图之外而看不到
-      xtermRef.current.write(text)
-      xtermRef.current.scrollToBottom()
+      // 否则用户回看历史时横幅会落在视图之外而看不到。
+      // 注意：PinnedScroll 已构造（非降级）时会将公开 scrollToBottom 置为空操作，
+      // 故此处不能依赖 scrollToBottom，改用 scrollToLine 直接定位到缓冲区底部。
+      const term = xtermRef.current
+      term.write(text)
+      term.scrollToLine(term.buffer.active.baseY)
     }
   }, [])
 
@@ -151,6 +160,10 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     }
     return undefined
   }, [updateSessionStatus, writeBanner])
+
+  // 始终把最新的 bindConnection 同步到 ref，供绑定 effect 通过 ref 调用，
+  // 避免 bindConnection 引用变化触发 effect 重绑
+  bindConnectionRef.current = bindConnection
 
   /** 解绑数据流 */
   const unbindData = useCallback(() => {
@@ -437,12 +450,12 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     const currentSession = useAppStore.getState().sessions.find((s) => s.id === sessionId)
     if (!currentSession) return
 
-    bindConnection(currentSession.id, xterm)
+    bindConnectionRef.current(currentSession.id, xterm)
 
     return () => {
       unbindData()
     }
-  }, [sessionId, bindConnection]) // bindConnection 引用稳定（依赖均为稳定值），仅在 sessionId 变化时重新绑定
+  }, [sessionId]) // 仅在 sessionId 变化时重新绑定；bindConnection 通过 ref 访问，引用变化不触发重绑
 
   // 键盘锁状态订阅：仅在状态栏可见时订阅，避免不必要的 IPC 和状态更新
   useEffect(() => {
