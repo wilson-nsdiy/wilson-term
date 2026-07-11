@@ -188,6 +188,7 @@ const defaultSettings: AppSettings = {
   cursorStyle: 'block',
   cursorBlink: true,
   scrollback: 10000,
+  renderer: 'webgl',
   logEnabled: true,
   logPath: '',
   logWithTimestamp: true,

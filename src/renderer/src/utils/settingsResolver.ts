@@ -16,6 +16,7 @@ export interface ResolvedSettings {
   cursorStyle: 'block' | 'underline' | 'bar'
   cursorBlink: boolean
   scrollback: number
+  renderer: 'webgl' | 'canvas' | 'dom'
   logConfig: LogConfig
   rightClickPaste: boolean
   trimPaste: boolean
@@ -70,6 +71,7 @@ function globalToOverrides(settings: AppSettings): ProfileOverrides {
     cursorStyle: settings.cursorStyle,
     cursorBlink: settings.cursorBlink,
     scrollback: settings.scrollback,
+    renderer: settings.renderer,
     logEnabled: settings.logEnabled,
     logPath: settings.logPath,
     logWithTimestamp: settings.logWithTimestamp,
@@ -97,6 +99,7 @@ function overridesToResolved(overrides: Partial<ProfileOverrides>, fallback: App
     cursorStyle: overrides.cursorStyle ?? fallback.cursorStyle,
     cursorBlink: overrides.cursorBlink ?? fallback.cursorBlink,
     scrollback: overrides.scrollback ?? fallback.scrollback,
+    renderer: overrides.renderer ?? fallback.renderer,
     logConfig: {
       logEnabled: overrides.logEnabled ?? fallback.logEnabled,
       logPath: overrides.logPath ?? fallback.logPath,
