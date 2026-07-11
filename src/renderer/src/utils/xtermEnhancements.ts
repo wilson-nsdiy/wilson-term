@@ -22,7 +22,6 @@ interface XTermInternals {
     scrollToBottom?: () => void
     _scrollToBottom?: () => void
     _renderService?: {
-      _renderRows?: (start: number, end: number) => void
       clear?: () => void
       handleResize?: (cols: number, rows: number) => void
     }
@@ -100,6 +99,7 @@ export class FlowControl {
   private readonly highWatermark = 10
   private bytesWritten = 0
   private readonly bytesThreshold = 1024 * 128
+  private disposed = false
   private stats = {
     totalWrites: 0,
     totalBytes: 0,
@@ -119,6 +119,8 @@ export class FlowControl {
       await new Promise<void>((resolve) => {
         this.resolveQueue.push(resolve)
       })
+      // await 期间可能已 dispose，停止后续对 xterm 的访问，避免写入已销毁实例
+      if (this.disposed) return
     }
     this.bytesWritten += data.length
     if (this.bytesWritten > this.bytesThreshold) {
@@ -148,6 +150,24 @@ export class FlowControl {
     return {
       ...this.stats,
       currentPendingCallbacks: this.pendingCallbacks
+    }
+  }
+
+  /**
+   * 销毁并清理资源：解除所有阻塞中的等待者，避免组件卸载后 Promise 永不 resolve
+   * 造成闭包引用泄漏。xterm.write 的完成回调在 xterm 销毁后不一定触发，
+   * 故不能依赖回调来释放等待者。dispose 后的 write 调用会在 await 解除后安全跳过。
+   */
+  dispose(): void {
+    this.disposed = true
+    this.blocked = false
+    this.pendingCallbacks = 0
+    // 逐个 resolve 等待者以解除阻塞；write 在 await 后会因 disposed 检查而跳过 xterm 访问。
+    // 用 resolve 而非 reject：PinnedScroll.writeChain 已统一 catch，reject 会冒泡为
+    // unhandledrejection，且写入未完成对用户无意义，安全解除阻塞即可。
+    const waiters = this.resolveQueue.splice(0)
+    for (const resolve of waiters) {
+      resolve()
     }
   }
 }
@@ -370,8 +390,8 @@ export class PinnedScroll {
    * pinned 则跟到底，否则维持用户滚动位置。fit 会重置渲染缓冲并清空画面，
    * xterm 仅在下一帧重绘，会留一帧空白闪烁，可选地强制立即重绘消除闪烁。
    *
-   * ⚠️ forceRepaint 依赖 xterm 内部 API _renderService._renderRows，
-   * 在 WebGL/Canvas 渲染器下可能不存在或行为不同。升级 xterm 时需回归测试。
+   * forceRepaint 使用公开 API xterm.refresh，所有渲染器（DOM/Canvas/WebGL）均可用，
+   * 避免依赖内部 _renderService._renderRows（在 WebGL/Canvas 下可能不存在）。
    */
   withScrollPreservation(fn: () => void, forceRepaint = false): void {
     if (this.disposed) return
@@ -394,7 +414,12 @@ export class PinnedScroll {
       }
     }
     if (forceRepaint) {
-      this.xtermCore?._renderService?._renderRows?.(0, this.xterm.rows - 1)
+      // 公开 API：所有渲染器（DOM/Canvas/WebGL）均支持，立即触发全屏重绘
+      try {
+        this.xterm.refresh(0, this.xterm.rows - 1)
+      } catch (e) {
+        console.warn('[PinnedScroll] refresh 失败:', e)
+      }
     }
   }
 
@@ -422,6 +447,8 @@ export class PinnedScroll {
     }
     this.xtermCore = null
     this.originalScrollToBottom = null
+    // 级联销毁背压控制器，释放阻塞中的等待者
+    this.flowControl.dispose()
   }
 }
 

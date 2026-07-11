@@ -93,12 +93,15 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   )
   const resolved = resolveSettings(settings, profile, sessionOverrides)
 
-  /** 写入状态提示横幅；pinnedScroll 不可用时兜底直接写入 xterm，避免提示静默丢失 */
+  /** 写入状态提示横幅；pinnedScroll 不可用时兜底直接写入 xterm 并滚到底部，避免提示静默丢失 */
   const writeBanner = useCallback((text: string) => {
     if (pinnedScrollRef.current) {
       pinnedScrollRef.current.writeBanner(text)
     } else if (xtermRef.current) {
+      // 兜底分支：与 PinnedScroll.writeBanner 语义对齐，写入后强制滚到底部，
+      // 否则用户回看历史时横幅会落在视图之外而看不到
       xtermRef.current.write(text)
+      xtermRef.current.scrollToBottom()
     }
   }, [])
 
@@ -147,7 +150,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       return resizeDisposable
     }
     return undefined
-  }, [updateSessionStatus])
+  }, [updateSessionStatus, writeBanner])
 
   /** 解绑数据流 */
   const unbindData = useCallback(() => {
