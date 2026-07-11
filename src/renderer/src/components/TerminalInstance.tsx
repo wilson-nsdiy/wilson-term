@@ -442,7 +442,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     return () => {
       unbindData()
     }
-  }, [sessionId]) // 当 sessionId 变化时重新绑定（实际不会变，但确保安全）
+  }, [sessionId, bindConnection]) // bindConnection 引用稳定（依赖均为稳定值），仅在 sessionId 变化时重新绑定
 
   // 键盘锁状态订阅：仅在状态栏可见时订阅，避免不必要的 IPC 和状态更新
   useEffect(() => {
