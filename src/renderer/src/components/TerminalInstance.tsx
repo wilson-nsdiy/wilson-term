@@ -104,13 +104,12 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     if (pinnedScrollRef.current) {
       pinnedScrollRef.current.writeBanner(text)
     } else if (xtermRef.current) {
-      // 兜底分支：与 PinnedScroll.writeBanner 语义对齐，写入后强制滚到底部，
+      // 兜底分支：PinnedScroll 未构造时（如挂载初期或降级场景）直接写入 xterm 并滚到底部，
       // 否则用户回看历史时横幅会落在视图之外而看不到。
-      // 注意：PinnedScroll 已构造（非降级）时会将公开 scrollToBottom 置为空操作，
-      // 故此处不能依赖 scrollToBottom，改用 scrollToLine 直接定位到缓冲区底部。
+      // PinnedScroll 不再置空公开 scrollToBottom，故此处可直接调用。
       const term = xtermRef.current
       term.write(text)
-      term.scrollToLine(term.buffer.active.baseY)
+      term.scrollToBottom()
     }
   }, [])
 
