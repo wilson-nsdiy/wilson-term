@@ -583,7 +583,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     const MONITOR_INTERVAL = 30000 // 30秒检查一次
     const timer = setInterval(() => {
       try {
-        const flowStats = pinnedScrollRef.current?.['flowControl']?.getStats()
+        const flowStats = pinnedScrollRef.current?.getFlowStats()
         const scrollStats = pinnedScrollRef.current?.getStats()
         const rendererStats = rendererManagerRef.current?.getStats()
 
