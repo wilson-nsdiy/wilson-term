@@ -578,34 +578,56 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     }
   }, [settings.fontSize, settings.fontFamily, settings.fontWeight, settings.fontWeightBold, settings.lineHeight, settings.letterSpacing, settings.cursorStyle, settings.cursorBlink, settings.scrollback, settings.background, settings.foreground, sessionProfileId, sessionOverrides, profiles])
 
-  // 性能监控：定期检查背压与渲染器状态
+  // 性能监控：定期检查背压与渲染器状态（基于两次采样间的增量，避免累计值反复刷日志）
   useEffect(() => {
     const MONITOR_INTERVAL = 30000 // 30秒检查一次
+    // 上一轮采样值，用于计算增量；首次采样不告警，仅建立基线
+    let prevFlow: { totalWrites: number; blockedWrites: number } | null = null
+    let prevContextLoss = 0
+    let prevWriteErrors = 0
     const timer = setInterval(() => {
       try {
         const flowStats = pinnedScrollRef.current?.getFlowStats()
         const scrollStats = pinnedScrollRef.current?.getStats()
         const rendererStats = rendererManagerRef.current?.getStats()
 
-        // 背压频繁触发预警
-        if (flowStats && flowStats.blockedWrites > 100) {
-          console.warn('[性能监控] 终端背压触发频繁', {
-            totalWrites: flowStats.totalWrites,
-            blockedWrites: flowStats.blockedWrites,
-            blockedRate: ((flowStats.blockedWrites / flowStats.totalWrites) * 100).toFixed(2) + '%',
-            maxPending: flowStats.maxPendingCallbacks
+        // 背压频繁触发预警：按本轮新增的 blockedWrites 占比判断，而非累计值
+        if (flowStats) {
+          if (prevFlow) {
+            const newWrites = flowStats.totalWrites - prevFlow.totalWrites
+            const newBlocked = flowStats.blockedWrites - prevFlow.blockedWrites
+            // 仅在有新增写入且本轮阻塞占比超 30% 时告警，避免长期运行后累计值恒超阈值反复刷日志
+            if (newWrites > 0 && newBlocked / newWrites > 0.3) {
+              console.warn('[性能监控] 终端背压触发频繁', {
+                本轮写入: newWrites,
+                本轮阻塞: newBlocked,
+                阻塞率: ((newBlocked / newWrites) * 100).toFixed(2) + '%',
+                当前待回调: flowStats.currentPendingCallbacks,
+                峰值待回调: flowStats.maxPendingCallbacks
+              })
+            }
+          }
+          prevFlow = { totalWrites: flowStats.totalWrites, blockedWrites: flowStats.blockedWrites }
+        }
+
+        // 写入错误监控：仅对本轮新增的错误告警
+        if (scrollStats && scrollStats.writeErrors > prevWriteErrors) {
+          console.warn('[性能监控] 终端写入发生错误', {
+            本轮新增: scrollStats.writeErrors - prevWriteErrors,
+            累计: scrollStats.writeErrors
           })
         }
+        prevWriteErrors = scrollStats?.writeErrors ?? prevWriteErrors
 
-        // 写入错误监控
-        if (scrollStats && scrollStats.writeErrors > 0) {
-          console.warn('[性能监控] 终端写入发生错误', scrollStats)
+        // GPU 上下文丢失监控：仅对本轮新增事件告警
+        if (rendererStats && rendererStats.contextLossEvents > prevContextLoss) {
+          console.warn('[性能监控] GPU 渲染器上下文丢失', {
+            本轮新增: rendererStats.contextLossEvents - prevContextLoss,
+            当前渲染器: rendererStats.activeRenderer,
+            恢复尝试: rendererStats.recoveryAttempts
+          })
         }
-
-        // GPU 上下文丢失监控
-        if (rendererStats && rendererStats.contextLossEvents > 0) {
-          console.warn('[性能监控] GPU 渲染器状态', rendererStats)
-        }
+        prevContextLoss = rendererStats?.contextLossEvents ?? prevContextLoss
       } catch (e) {
         console.error('[性能监控] 统计收集失败:', e)
       }
