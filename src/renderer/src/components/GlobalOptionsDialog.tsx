@@ -52,7 +52,7 @@ const DEFAULT_FORM = {
   backgroundOpacity: 1,
   cursorStyle: 'block' as AppSettings['cursorStyle'],
   cursorBlink: true,
-  scrollback: 1000
+  scrollback: 10000
 }
 
 const GlobalOptionsDialog: React.FC<GlobalOptionsDialogProps> = ({ open, onClose }) => {
@@ -475,7 +475,7 @@ const GlobalOptionsDialog: React.FC<GlobalOptionsDialogProps> = ({ open, onClose
                       <input
                         type="number"
                         value={form.scrollback}
-                        onChange={(e) => updateForm('scrollback', Math.max(0, Math.min(100000, Number(e.target.value) || 1000)))}
+                        onChange={(e) => updateForm('scrollback', Math.max(0, Math.min(100000, Number(e.target.value) || 10000)))}
                         className={inputClass}
                         min={0}
                         max={100000}
