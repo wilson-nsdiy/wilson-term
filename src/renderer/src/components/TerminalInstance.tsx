@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useCallback, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { useShallow } from 'zustand/react/shallow'
 import { useAppStore } from '../store'
 import type { SessionStatus, ConnectionConfig } from '@shared/types'
@@ -170,6 +171,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       lineHeight: resolved.lineHeight,
       letterSpacing: resolved.letterSpacing,
       scrollback: resolved.scrollback,
+      drawBoldTextInBrightColors: true,
       theme: {
         background: '#00000000',
         foreground: resolved.foreground,
@@ -196,9 +198,12 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     const fitAddon = new FitAddon()
     const searchAddon = new SearchAddon()
+    const unicode11Addon = new Unicode11Addon()
 
     xterm.loadAddon(fitAddon)
     xterm.loadAddon(searchAddon)
+    xterm.loadAddon(unicode11Addon)
+    xterm.unicode.activeVersion = '11'
 
     xterm.open(terminalRef.current)
     fitAddon.fit()

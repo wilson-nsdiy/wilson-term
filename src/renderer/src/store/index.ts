@@ -187,7 +187,7 @@ const defaultSettings: AppSettings = {
   backgroundOpacity: 1,
   cursorStyle: 'block',
   cursorBlink: true,
-  scrollback: 1000,
+  scrollback: 10000,
   logEnabled: true,
   logPath: '',
   logWithTimestamp: true,
