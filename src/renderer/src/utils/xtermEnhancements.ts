@@ -87,14 +87,14 @@ export interface FlowControlStats {
  * 开始追踪回调；待完成回调超过 highWatermark 时阻塞后续写入，回落到
  * lowWatermark 以下时恢复。这与 tabby 的实现一致。
  *
- * ⚠️ 并发限制：本类使用单一 resolveBlocked 存储解除阻塞的 resolver，
- * 若多个 write 并发调用，只有最后一个会被 resolve，其余会永久阻塞。
- * 必须在外部串行化调用（如 PinnedScroll.writeChain）或确保单线程使用。
+ * 内部使用 resolver 队列而非单一 resolver，即使未来出现并发调用也不会因
+ * 覆盖导致等待者永久阻塞——但仍建议外部串行化调用（如 PinnedScroll.writeChain）
+ * 以保证写入顺序。
  */
 export class FlowControl {
   private blocked = false
-  /** 解除阻塞的 resolver，仅支持单个等待者（并发调用会相互覆盖） */
-  private resolveBlocked: (() => void) | null = null
+  /** 解除阻塞的 resolver 队列，支持多个并发等待者 */
+  private resolveQueue: Array<() => void> = []
   private pendingCallbacks = 0
   private readonly lowWatermark = 5
   private readonly highWatermark = 10
@@ -117,7 +117,7 @@ export class FlowControl {
     if (this.blocked) {
       this.stats.blockedWrites++
       await new Promise<void>((resolve) => {
-        this.resolveBlocked = resolve
+        this.resolveQueue.push(resolve)
       })
     }
     this.bytesWritten += data.length
@@ -132,9 +132,10 @@ export class FlowControl {
         this.pendingCallbacks--
         if (this.blocked && this.pendingCallbacks < this.lowWatermark) {
           this.blocked = false
-          const resolve = this.resolveBlocked
-          this.resolveBlocked = null
-          resolve?.()
+          // 逐个释放等待者；resolveQueue 在阻塞解除后应清空
+          while (this.resolveQueue.length > 0) {
+            this.resolveQueue.shift()?.()
+          }
         }
       })
     } else {
@@ -497,6 +498,10 @@ export class RendererManager {
       this.xterm.loadAddon(addon)
       this.webglAddon = addon
       this.stats.activeRenderer = 'webgl'
+      // 恢复成功，重置计数——recoveryAttempts 应统计"连续失败次数"，
+      // 而非生命周期总恢复次数，否则多次偶发 context loss 后即使每次都恢复成功
+      // 也会被误判为达到上限并强制回退 Canvas。
+      this.recoveryAttempts = 0
       // 监听窗口 focus，在 GPU 上下文丢失后切回前台时尝试恢复。
       // 仅在首次加载时注册一次，避免 context loss 恢复时重复 attachWebGL 导致监听器泄漏。
       if (!this.focusHandler) {

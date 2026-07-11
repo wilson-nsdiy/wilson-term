@@ -93,6 +93,15 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   )
   const resolved = resolveSettings(settings, profile, sessionOverrides)
 
+  /** 写入状态提示横幅；pinnedScroll 不可用时兜底直接写入 xterm，避免提示静默丢失 */
+  const writeBanner = useCallback((text: string) => {
+    if (pinnedScrollRef.current) {
+      pinnedScrollRef.current.writeBanner(text)
+    } else if (xtermRef.current) {
+      xtermRef.current.write(text)
+    }
+  }, [])
+
   /** 绑定统一连接数据流到 xterm */
   const bindConnection = useCallback((sid: string, xterm: XTerm) => {
     // 订阅连接数据，写入 xterm（经 PinnedScroll 维护滚动位置 + FlowControl 背压）
@@ -123,7 +132,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
         }
         if (status === 'disconnected' && xtermRef.current) {
           // 通过 writeBanner 写入，保证与远端数据流的顺序一致并强制滚到底部
-          pinnedScrollRef.current?.writeBanner('\r\n\x1b[31m连接已断开\x1b[0m\r\n\x1b[33m按 R 键重新连接\x1b[0m\r\n')
+          writeBanner('\r\n\x1b[31m连接已断开\x1b[0m\r\n\x1b[33m按 R 键重新连接\x1b[0m\r\n')
         }
       }
     })
@@ -462,13 +471,13 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     if (sessionStatus === 'connecting') {
       if (sessionConfig.type === 'serial') {
-        pinnedScrollRef.current?.writeBanner(`\x1b[32m正在打开串口 ${sessionConfig.path} (${sessionConfig.baudRate}bps)...\x1b[0m\r\n`)
+        writeBanner(`\x1b[32m正在打开串口 ${sessionConfig.path} (${sessionConfig.baudRate}bps)...\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'ssh') {
-        pinnedScrollRef.current?.writeBanner(`\x1b[34m正在连接 ${sessionConfig.username}@${sessionConfig.host}:${sessionConfig.port}...\x1b[0m\r\n`)
+        writeBanner(`\x1b[34m正在连接 ${sessionConfig.username}@${sessionConfig.host}:${sessionConfig.port}...\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'telnet') {
-        pinnedScrollRef.current?.writeBanner(`\x1b[35m正在连接 Telnet ${sessionConfig.host}:${sessionConfig.port}...\x1b[0m\r\n`)
+        writeBanner(`\x1b[35m正在连接 Telnet ${sessionConfig.host}:${sessionConfig.port}...\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'bash') {
-        pinnedScrollRef.current?.writeBanner(`\x1b[33m正在启动本地终端...\x1b[0m\r\n`)
+        writeBanner(`\x1b[33m正在启动本地终端...\x1b[0m\r\n`)
       }
     } else if (sessionStatus === 'connected') {
       // 连接成功后，主动同步终端真实尺寸到 PTY（串口不需要）
@@ -476,16 +485,16 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
         window.api.connection.resize(sessionId, xterm.cols, xterm.rows)
       }
       if (sessionConfig.type === 'serial') {
-        pinnedScrollRef.current?.writeBanner(`\x1b[32m串口 ${sessionConfig.path} 已成功打开\x1b[0m\r\n`)
+        writeBanner(`\x1b[32m串口 ${sessionConfig.path} 已成功打开\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'ssh') {
-        pinnedScrollRef.current?.writeBanner(`\x1b[32m已成功连接到 ${sessionConfig.username}@${sessionConfig.host}:${sessionConfig.port}\x1b[0m\r\n`)
+        writeBanner(`\x1b[32m已成功连接到 ${sessionConfig.username}@${sessionConfig.host}:${sessionConfig.port}\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'telnet') {
-        pinnedScrollRef.current?.writeBanner(`\x1b[32m已成功连接到 Telnet ${sessionConfig.host}:${sessionConfig.port}\x1b[0m\r\n`)
+        writeBanner(`\x1b[32m已成功连接到 Telnet ${sessionConfig.host}:${sessionConfig.port}\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'bash') {
-        pinnedScrollRef.current?.writeBanner(`\x1b[32m本地终端已启动\x1b[0m\r\n`)
+        writeBanner(`\x1b[32m本地终端已启动\x1b[0m\r\n`)
       }
     } else if (sessionStatus === 'error' && sessionErrorMessage) {
-      pinnedScrollRef.current?.writeBanner(`\r\n\x1b[31m连接失败: ${sessionErrorMessage}\x1b[0m\r\n\x1b[33m按 R 键重新连接\x1b[0m\r\n`)
+      writeBanner(`\r\n\x1b[31m连接失败: ${sessionErrorMessage}\x1b[0m\r\n\x1b[33m按 R 键重新连接\x1b[0m\r\n`)
     }
 
     // 断开或错误状态时注册 R 键重连监听
