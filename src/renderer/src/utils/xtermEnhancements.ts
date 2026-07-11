@@ -10,8 +10,14 @@
  *
  * 这三项都围绕 xterm 实例运作，封装在此以便 TerminalInstance 保持简洁。
  *
- * 访问 xterm 内部 _core API（_scrollToBottom/_renderService 等）无官方类型声明，
+ * 访问 xterm 内部 _core API（scrollToBottom/_renderService 等）无官方类型声明，
  * 故使用 any；渲染器 addon 在 Electron 渲染进程通过 require 同步加载。
+ *
+ * 注意：xterm 5.5.0 的 _core 上不存在 _scrollToBottom 私有方法（早期版本照搬
+ * tabby 的实现误以为存在）。新输出自动滚底由 BufferService.scroll() 中的
+ * isUserScrolling 标志控制，直接操作 buffer.ydisp，不经过 scrollToBottom；
+ * 用户输入触发的滚底由 scrollOnUserInput 选项控制。故本模块改用官方选项
+ * scrollOnUserInput=false 接管滚底决策，不再改写 _core.scrollToBottom。
  */
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
 import type { Terminal } from '@xterm/xterm'
@@ -20,7 +26,6 @@ import type { Terminal } from '@xterm/xterm'
 interface XTermInternals {
   _core?: {
     scrollToBottom?: () => void
-    _scrollToBottom?: () => void
     _renderService?: {
       clear?: () => void
       handleResize?: (cols: number, rows: number) => void
@@ -208,9 +213,8 @@ export interface PinnedScrollStats {
 export class PinnedScroll {
   private pinnedToBottom = true
   private xtermCore: any
+  /** _core.scrollToBottom 的 bound 副本，供本管理器主动滚底时直接调用 */
   private originalScrollToBottom: (() => void) | null = null
-  /** _scrollToBottom 原始实现，dispose 时还原，保证对私有 API 的改写可逆 */
-  private originalPrivateScrollToBottom: (() => void) | null = null
   private wheelHandler: (e: WheelEvent) => void
   /** 滚轮解 pin 排定的 RAF id，dispose 时取消，避免回调在销毁后访问 xterm.buffer */
   private rafId: number | null = null
@@ -235,7 +239,6 @@ export class PinnedScroll {
     // 版本兼容性检查（全局只检查一次）
     checkXTermVersion()
 
-    // 保留 xterm 原生 scrollToBottom，将其替换为空操作，由本管理器接管
     if (!hasXTermCore(xterm)) {
       console.warn('[PinnedScroll] xterm._core 不可用，启用降级模式（基础滚动功能）')
       this.degradedMode = true
@@ -243,14 +246,15 @@ export class PinnedScroll {
     } else {
       this.xtermCore = (xterm as any)['_core']
       if (this.xtermCore) {
-        // 保存原函数引用，dispose 时还原
+        // 接管滚底决策：用官方选项 scrollOnUserInput=false 阻止"用户输入时自动滚底"
+        // （xterm 在用户按键且 ybase!==ydisp 时会触发 onRequestScrollToBottom → scrollToBottom，
+        // 见 CoreService.triggerDataEvent）。这替代了早期版本"置空 _core.scrollToBottom"的做法——
+        // 那种做法会令公开 API Terminal.scrollToBottom() 静默失效，且对"新输出自动滚底"无效
+        // （后者由 BufferService.scroll() 的 isUserScrolling 标志控制，不经过 scrollToBottom）。
+        xterm.options.scrollOnUserInput = false
+        // 保存 scrollToBottom 的 bound 副本，供本管理器主动滚底时直接调用。
+        // 不改写 _core 上的任何方法，避免污染 xterm 内部状态与公开 API。
         this.originalScrollToBottom = this.xtermCore.scrollToBottom.bind(this.xtermCore)
-        // 保存 _scrollToBottom 原始实现，dispose 时一并还原，保证对私有 API 的改写可逆
-        this.originalPrivateScrollToBottom = this.xtermCore._scrollToBottom ?? null
-        // xterm 内部"新输出自动滚底"走 _scrollToBottom，将其重定向到公开 scrollToBottom 实现，
-        // 同时把公开 scrollToBottom 置为空操作，由本管理器接管滚底决策。
-        this.xtermCore._scrollToBottom = this.originalScrollToBottom
-        this.xtermCore.scrollToBottom = () => null
       }
     }
 
@@ -350,10 +354,10 @@ export class PinnedScroll {
     this.consecutiveErrors = 0 // 写入成功，重置错误计数
 
     if (wasPinned) {
-      this.xtermCore?._scrollToBottom?.()
+      this.originalScrollToBottom?.()
     } else {
       // 恢复用户滚动位置 —— xterm 在快速输出时会扰动 viewportY，
-      // 且被替换为空操作的 scrollToBottom 无法纠正它。
+      // 需手动恢复到写入前的位置，避免视图被带偏。
       const maxScroll = this.xterm.buffer.active.baseY
       const targetY = Math.min(savedViewportY, maxScroll)
       if (this.xterm.buffer.active.viewportY !== targetY) {
@@ -366,7 +370,7 @@ export class PinnedScroll {
   scrollToBottom(): void {
     this.pinnedToBottom = true
     if (!this.degradedMode) {
-      this.xtermCore?._scrollToBottom?.()
+      this.originalScrollToBottom?.()
     } else {
       this.xterm.scrollToBottom()
     }
@@ -397,7 +401,7 @@ export class PinnedScroll {
     if (this.disposed) return
 
     if (!this.degradedMode) {
-      this.xtermCore?._scrollToBottom?.()
+      this.originalScrollToBottom?.()
     } else {
       this.xterm.scrollToBottom()
     }
@@ -423,7 +427,7 @@ export class PinnedScroll {
     const savedViewportY = this.xterm.buffer.active.viewportY
     fn()
     if (wasPinned) {
-      this.xtermCore?._scrollToBottom?.()
+      this.originalScrollToBottom?.()
     } else {
       const maxScroll = this.xterm.buffer.active.baseY
       const targetY = Math.min(savedViewportY, maxScroll)
@@ -459,18 +463,10 @@ export class PinnedScroll {
       cancelAnimationFrame(this.rafId)
       this.rafId = null
     }
-    // 还原原始 scrollToBottom 与 _scrollToBottom，保证对私有 API 的改写可逆
-    if (this.xtermCore) {
-      if (this.originalScrollToBottom) {
-        this.xtermCore.scrollToBottom = this.originalScrollToBottom
-      }
-      if (this.originalPrivateScrollToBottom) {
-        this.xtermCore._scrollToBottom = this.originalPrivateScrollToBottom
-      }
-    }
+    // 本管理器未改写 _core 上的任何方法（构造时仅保存 bound 副本与设置官方选项），
+    // 故无需还原 _core 状态；xterm 实例随后会被外层 dispose，选项随之失效。
     this.xtermCore = null
     this.originalScrollToBottom = null
-    this.originalPrivateScrollToBottom = null
     // 级联销毁背压控制器，释放阻塞中的等待者
     this.flowControl.dispose()
   }
