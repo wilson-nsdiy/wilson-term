@@ -177,6 +177,8 @@ export class PinnedScroll {
   private xtermCore: any
   private originalScrollToBottom: (() => void) | null = null
   private wheelHandler: (e: WheelEvent) => void
+  /** 滚轮解 pin 排定的 RAF id，dispose 时取消，避免回调在销毁后访问 xterm.buffer */
+  private rafId: number | null = null
   /** 写入串行化锁：onData 回调同步触发多次时，保证 write 按序执行，避免背压与滚动位置错乱 */
   private writeChain: Promise<void> = Promise.resolve()
   /** 降级模式：_core API 不可用时回退到基础行为 */
@@ -218,7 +220,12 @@ export class PinnedScroll {
       if (e.deltaY < 0) {
         this.pinnedToBottom = false
       }
-      requestAnimationFrame(() => this.updatePinnedState())
+      // 取消尚未执行的 RAF 避免回调堆积；dispose 时也会 cancelAnimationFrame
+      if (this.rafId !== null) cancelAnimationFrame(this.rafId)
+      this.rafId = requestAnimationFrame(() => {
+        this.rafId = null
+        this.updatePinnedState()
+      })
     }
   }
 
@@ -246,6 +253,7 @@ export class PinnedScroll {
   }
 
   private updatePinnedState(): void {
+    if (this.disposed) return
     this.pinnedToBottom = this.isAtBottom()
   }
 
@@ -289,6 +297,8 @@ export class PinnedScroll {
     // 降级模式：直接写入，不做滚动位置控制
     if (this.degradedMode) {
       await this.flowControl.write(data)
+      // await 期间可能已 dispose，停止后续对 xterm 的访问
+      if (this.disposed) return
       this.consecutiveErrors = 0
       return
     }
@@ -296,6 +306,8 @@ export class PinnedScroll {
     const wasPinned = this.pinnedToBottom
     const savedViewportY = this.xterm.buffer.active.viewportY
     await this.flowControl.write(data)
+    // await 期间组件可能卸载并销毁 xterm，恢复滚动位置前必须重新检查
+    if (this.disposed) return
     this.consecutiveErrors = 0 // 写入成功，重置错误计数
 
     if (wasPinned) {
@@ -342,6 +354,8 @@ export class PinnedScroll {
     this.stats.totalBanners++
     this.pinnedToBottom = true
     await this.flowControl.write(data)
+    // await 期间组件可能卸载并销毁 xterm，停止后续访问
+    if (this.disposed) return
 
     if (!this.degradedMode) {
       this.xtermCore?._scrollToBottom?.()
@@ -396,6 +410,11 @@ export class PinnedScroll {
   /** 销毁并清理资源 */
   dispose(): void {
     this.disposed = true
+    // 取消可能挂起的 RAF，避免回调在销毁后访问 xterm.buffer
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId)
+      this.rafId = null
+    }
     // 还原原始 scrollToBottom 函数
     if (this.xtermCore && this.originalScrollToBottom) {
       this.xtermCore.scrollToBottom = this.originalScrollToBottom
@@ -431,6 +450,8 @@ export class RendererManager {
   private xtermCore: any
   private pendingRecovery = false
   private recoveryAttempts = 0
+  /** WebGL 加载失败或恢复超限后置 true，后续恢复直接走 Canvas，避免反复重建 */
+  private webglUnavailable = false
   private focusHandler: (() => void) | null = null
   private disposed = false
   private stats = {
@@ -485,6 +506,7 @@ export class RendererManager {
       return true
     } catch (e) {
       console.warn('[RendererManager] WebGL 渲染器加载失败，回退到 Canvas:', e)
+      this.webglUnavailable = true
       this.stats.activeRenderer = 'none'
       this.attachCanvas()
       return false
@@ -551,15 +573,18 @@ export class RendererManager {
     this.recoveryAttempts++
     this.stats.recoveryAttempts = this.recoveryAttempts
 
-    if (this.preferred === 'webgl') {
+    // preferred=webgl 且 WebGL 仍可用时尝试 WebGL 恢复；超限后标记不可用并回退 Canvas，
+    // 后续恢复直接走 Canvas 分支，避免每次 reactivate 都反复重建失败的 WebGL。
+    if (this.preferred === 'webgl' && !this.webglUnavailable) {
       if (this.recoveryAttempts < MAX_WEBGL_RECOVERY_ATTEMPTS) {
         console.log(`[RendererManager] 尝试恢复 WebGL 渲染器 (${this.recoveryAttempts}/${MAX_WEBGL_RECOVERY_ATTEMPTS})`)
         this.attachWebGL()
       } else {
-        console.warn('[RendererManager] WebGL 恢复达到最大尝试次数，回退到 DOM 渲染器')
-        this.stats.activeRenderer = 'dom'
+        console.warn('[RendererManager] WebGL 恢复达到最大尝试次数，回退到 Canvas 渲染器')
+        this.webglUnavailable = true
+        this.attachCanvas()
       }
-    } else if (this.preferred === 'canvas') {
+    } else if (this.preferred === 'canvas' || this.webglUnavailable) {
       console.log('[RendererManager] 尝试恢复 Canvas 渲染器')
       this.attachCanvas()
     }
@@ -576,7 +601,12 @@ export class RendererManager {
 
     this.stats.reactivations++
 
-    if (this.pendingRecovery || (this.preferred === 'webgl' && !this.webglAddon) || (this.preferred === 'canvas' && !this.canvasAddon)) {
+    // 期望渲染器：WebGL 不可用时以 Canvas 为准，避免 !webglAddon 恒真导致每次切回都重建
+    const expectWebgl = this.preferred === 'webgl' && !this.webglUnavailable
+    const expectCanvas = this.preferred === 'canvas' || (this.preferred === 'webgl' && this.webglUnavailable)
+    const addonMissing = (expectWebgl && !this.webglAddon) || (expectCanvas && !this.canvasAddon)
+
+    if (this.pendingRecovery || addonMissing) {
       this.pendingRecovery = true
       this.recoverRenderer()
     } else {
