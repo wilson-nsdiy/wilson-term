@@ -37,9 +37,30 @@ function hasXTermCore(term: Terminal): term is Terminal & XTermInternals {
 /** 在本增强模块测试过的 xterm 版本 */
 const TESTED_XTERM_VERSIONS = ['5.5.0']
 
-/** 检查 xterm 版本兼容性（非阻断，仅警告） */
-function checkXTermVersion(term: Terminal): void {
-  const version = (term as any).version || (term as any)._core?.version || 'unknown'
+/** 缓存的 xterm 版本号，运行时从 package.json 读取一次 */
+let cachedXtermVersion: string | null = null
+
+/** 获取 xterm 版本号 */
+function getXTermVersion(): string {
+  if (cachedXtermVersion) return cachedXtermVersion
+
+  try {
+    // 在 Electron 渲染进程中通过 require 同步读取版本
+    const pkg = require('@xterm/xterm/package.json')
+    cachedXtermVersion = pkg.version || 'unknown'
+  } catch {
+    cachedXtermVersion = 'unknown'
+  }
+  return cachedXtermVersion
+}
+
+/** 检查 xterm 版本兼容性（非阻断，仅警告），全局只检查一次 */
+let versionChecked = false
+function checkXTermVersion(): void {
+  if (versionChecked) return
+  versionChecked = true
+
+  const version = getXTermVersion()
   if (!TESTED_XTERM_VERSIONS.includes(version)) {
     console.warn(
       `[xtermEnhancements] 当前 xterm 版本 (${version}) 未经过测试，已测试版本: ${TESTED_XTERM_VERSIONS.join(', ')}`
@@ -50,6 +71,7 @@ function checkXTermVersion(term: Terminal): void {
 /** 性能统计接口 */
 export interface FlowControlStats {
   totalWrites: number
+  /** 累计写入的字符数（UTF-16 码元数，非字节数） */
   totalBytes: number
   blockedWrites: number
   maxPendingCallbacks: number
@@ -64,9 +86,14 @@ export interface FlowControlStats {
  * 甚至卡死。FlowControl 通过高低水位线控制：累计写入超过 bytesThreshold 后
  * 开始追踪回调；待完成回调超过 highWatermark 时阻塞后续写入，回落到
  * lowWatermark 以下时恢复。这与 tabby 的实现一致。
+ *
+ * ⚠️ 并发限制：本类使用单一 resolveBlocked 存储解除阻塞的 resolver，
+ * 若多个 write 并发调用，只有最后一个会被 resolve，其余会永久阻塞。
+ * 必须在外部串行化调用（如 PinnedScroll.writeChain）或确保单线程使用。
  */
 export class FlowControl {
   private blocked = false
+  /** 解除阻塞的 resolver，仅支持单个等待者（并发调用会相互覆盖） */
   private resolveBlocked: (() => void) | null = null
   private pendingCallbacks = 0
   private readonly lowWatermark = 5
@@ -122,16 +149,6 @@ export class FlowControl {
       currentPendingCallbacks: this.pendingCallbacks
     }
   }
-
-  /** 重置统计数据 */
-  resetStats(): void {
-    this.stats = {
-      totalWrites: 0,
-      totalBytes: 0,
-      blockedWrites: 0,
-      maxPendingCallbacks: 0
-    }
-  }
 }
 
 /** 滚动管理器统计接口 */
@@ -158,6 +175,7 @@ export interface PinnedScrollStats {
 export class PinnedScroll {
   private pinnedToBottom = true
   private xtermCore: any
+  private originalScrollToBottom: (() => void) | null = null
   private wheelHandler: (e: WheelEvent) => void
   /** 写入串行化锁：onData 回调同步触发多次时，保证 write 按序执行，避免背压与滚动位置错乱 */
   private writeChain: Promise<void> = Promise.resolve()
@@ -177,8 +195,8 @@ export class PinnedScroll {
   private static readonly MAX_CONSECUTIVE_ERRORS = 10
 
   constructor(private xterm: Terminal, private flowControl: FlowControl) {
-    // 版本兼容性检查
-    checkXTermVersion(xterm)
+    // 版本兼容性检查（全局只检查一次）
+    checkXTermVersion()
 
     // 保留 xterm 原生 scrollToBottom，将其替换为空操作，由本管理器接管
     if (!hasXTermCore(xterm)) {
@@ -188,7 +206,9 @@ export class PinnedScroll {
     } else {
       this.xtermCore = (xterm as any)['_core']
       if (this.xtermCore) {
-        this.xtermCore._scrollToBottom = this.xtermCore.scrollToBottom.bind(this.xtermCore)
+        // 保存原函数引用，dispose 时还原
+        this.originalScrollToBottom = this.xtermCore.scrollToBottom.bind(this.xtermCore)
+        this.xtermCore._scrollToBottom = this.originalScrollToBottom
         this.xtermCore.scrollToBottom = () => null
       }
     }
@@ -334,6 +354,9 @@ export class PinnedScroll {
    * 在执行会改变终端尺寸的操作（如 fitAddon.fit()）前后保持滚动位置。
    * pinned 则跟到底，否则维持用户滚动位置。fit 会重置渲染缓冲并清空画面，
    * xterm 仅在下一帧重绘，会留一帧空白闪烁，可选地强制立即重绘消除闪烁。
+   *
+   * ⚠️ forceRepaint 依赖 xterm 内部 API _renderService._renderRows，
+   * 在 WebGL/Canvas 渲染器下可能不存在或行为不同。升级 xterm 时需回归测试。
    */
   withScrollPreservation(fn: () => void, forceRepaint = false): void {
     if (this.disposed) return
@@ -360,44 +383,25 @@ export class PinnedScroll {
     }
   }
 
-  /** 用户主动滚到顶部 */
-  scrollToTop(): void {
-    this.pinnedToBottom = false
-    this.xterm.scrollToTop()
-  }
-
-  /** 滚动若干行后更新 pinned 状态 */
-  scrollLines(amount: number): void {
-    this.xterm.scrollLines(amount)
-    this.updatePinnedState()
-  }
-
-  /** 滚动若干页后更新 pinned 状态 */
-  scrollPages(pages: number): void {
-    this.xterm.scrollPages(pages)
-    this.updatePinnedState()
-  }
-
   /** 获取性能统计数据 */
   getStats(): PinnedScrollStats {
     return { ...this.stats }
   }
 
-  /** 重置统计数据 */
-  resetStats(): void {
-    this.stats = {
-      totalWrites: 0,
-      totalBanners: 0,
-      writeErrors: 0,
-      bannerErrors: 0
-    }
-    this.consecutiveErrors = 0
+  /** 获取背压控制器的统计数据 */
+  getFlowStats(): FlowControlStats {
+    return this.flowControl.getStats()
   }
 
   /** 销毁并清理资源 */
   dispose(): void {
     this.disposed = true
+    // 还原原始 scrollToBottom 函数
+    if (this.xtermCore && this.originalScrollToBottom) {
+      this.xtermCore.scrollToBottom = this.originalScrollToBottom
+    }
     this.xtermCore = null
+    this.originalScrollToBottom = null
   }
 }
 
@@ -441,7 +445,7 @@ export class RendererManager {
     private host: HTMLElement,
     private preferred: RendererType
   ) {
-    checkXTermVersion(xterm)
+    checkXTermVersion()
     this.xtermCore = (xterm as any)['_core']
   }
 
@@ -491,6 +495,10 @@ export class RendererManager {
     try {
       const CanvasAddon = require('@xterm/addon-canvas').CanvasAddon
       const addon = new CanvasAddon()
+      // Canvas 渲染器也会丢失 2D 上下文，注册恢复回调
+      if (addon.onContextLoss) {
+        addon.onContextLoss(() => this.onCanvasContextLoss())
+      }
       this.xterm.loadAddon(addon)
       this.canvasAddon = addon
       this.stats.activeRenderer = 'canvas'
@@ -516,6 +524,22 @@ export class RendererManager {
     this.recoverRenderer()
   }
 
+  private onCanvasContextLoss(): void {
+    this.stats.contextLossEvents++
+    console.warn(`[RendererManager] Canvas 上下文丢失 (事件 #${this.stats.contextLossEvents})`)
+
+    try {
+      this.canvasAddon?.dispose()
+    } catch (e) {
+      console.warn('[RendererManager] 清理丢失的 Canvas addon 失败:', e)
+    }
+
+    this.canvasAddon = null
+    this.stats.activeRenderer = 'none'
+    this.pendingRecovery = true
+    this.recoverRenderer()
+  }
+
   private canRecover(): boolean {
     return this.host.offsetParent !== null && document.hasFocus()
   }
@@ -524,22 +548,27 @@ export class RendererManager {
     if (this.disposed || !this.pendingRecovery || !this.canRecover()) return
 
     this.pendingRecovery = false
-    this.stats.recoveryAttempts++
+    this.recoveryAttempts++
+    this.stats.recoveryAttempts = this.recoveryAttempts
 
-    if (this.recoveryAttempts < MAX_WEBGL_RECOVERY_ATTEMPTS) {
-      this.recoveryAttempts++
-      console.log(`[RendererManager] 尝试恢复 WebGL 渲染器 (${this.recoveryAttempts}/${MAX_WEBGL_RECOVERY_ATTEMPTS})`)
-      this.attachWebGL()
-    } else {
-      console.warn('[RendererManager] WebGL 恢复达到最大尝试次数，回退到 DOM 渲染器')
-      this.stats.activeRenderer = 'dom'
+    if (this.preferred === 'webgl') {
+      if (this.recoveryAttempts < MAX_WEBGL_RECOVERY_ATTEMPTS) {
+        console.log(`[RendererManager] 尝试恢复 WebGL 渲染器 (${this.recoveryAttempts}/${MAX_WEBGL_RECOVERY_ATTEMPTS})`)
+        this.attachWebGL()
+      } else {
+        console.warn('[RendererManager] WebGL 恢复达到最大尝试次数，回退到 DOM 渲染器')
+        this.stats.activeRenderer = 'dom'
+      }
+    } else if (this.preferred === 'canvas') {
+      console.log('[RendererManager] 尝试恢复 Canvas 渲染器')
+      this.attachCanvas()
     }
     this.redraw()
   }
 
   /**
-   * 标签页重新可见时调用：若有待恢复的渲染器则恢复，否则重置重试计数并重绘。
-   * 应用/窗口级 GPU 重置可能不触发 xterm 的 contextlost 事件，因此 WebGL 渲染器
+   * 标签页重新可见时调用：若有待恢复的渲染器则恢复，否则仅重置重试计数。
+   * 应用/窗口级 GPU 重置可能不触发 xterm 的 contextlost 事件，因此 WebGL/Canvas 渲染器
    * 丢失 addon 时也视为需要恢复。
    */
   reactivate(): void {
@@ -547,12 +576,12 @@ export class RendererManager {
 
     this.stats.reactivations++
 
-    if (this.pendingRecovery || (this.preferred === 'webgl' && !this.webglAddon)) {
+    if (this.pendingRecovery || (this.preferred === 'webgl' && !this.webglAddon) || (this.preferred === 'canvas' && !this.canvasAddon)) {
       this.pendingRecovery = true
       this.recoverRenderer()
     } else {
+      // 无 context loss，仅重置重试计数，跳过不必要的 redraw
       this.recoveryAttempts = 0
-      this.redraw()
     }
   }
 
@@ -568,30 +597,11 @@ export class RendererManager {
     }
   }
 
-  /** 显示器 DPI/分辨率变化时清理纹理图集 */
-  clearTextureAtlas(): void {
-    if (this.disposed) return
-
-    try {
-      this.webglAddon?.clearTextureAtlas?.()
-      this.canvasAddon?.clearTextureAtlas?.()
-    } catch (e) {
-      console.warn('[RendererManager] 清理纹理图集失败:', e)
-    }
-  }
-
   /** 获取性能统计数据 */
   getStats(): RendererStats {
-    return { ...this.stats }
-  }
-
-  /** 重置统计数据 */
-  resetStats(): void {
-    this.stats = {
-      activeRenderer: this.stats.activeRenderer,
-      contextLossEvents: 0,
-      recoveryAttempts: 0,
-      reactivations: 0
+    return {
+      ...this.stats,
+      recoveryAttempts: this.recoveryAttempts
     }
   }
 
