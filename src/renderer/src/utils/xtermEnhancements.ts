@@ -110,6 +110,10 @@ export class FlowControl {
   constructor(private xterm: Terminal) {}
 
   async write(data: string): Promise<void> {
+    // dispose 后不再写入，避免向已销毁的 xterm 实例写入。
+    // 非阻塞分支无 await、同步执行不会被 dispose 打断，故入口检查与下方
+    // 阻塞分支 await 后的 disposed 复查共同覆盖全部时序。
+    if (this.disposed) return
     this.stats.totalWrites++
     this.stats.totalBytes += data.length
 
