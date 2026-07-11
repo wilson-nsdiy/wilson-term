@@ -98,7 +98,11 @@ export class FlowControl {
   private readonly lowWatermark = 5
   private readonly highWatermark = 10
   private bytesWritten = 0
+  /** 自上次注册回调以来的写入次数，用于小包高频场景的兜底采样 */
+  private writesSinceLastCallback = 0
   private readonly bytesThreshold = 1024 * 128
+  /** 写入次数阈值：小包高频场景下，累计到此次数即使未达字节阈值也注册回调采样 pending，避免背压永不触发 */
+  private readonly writeCountThreshold = 64
   private disposed = false
   private stats = {
     totalWrites: 0,
@@ -127,10 +131,14 @@ export class FlowControl {
       if (this.disposed) return
     }
     this.bytesWritten += data.length
-    if (this.bytesWritten > this.bytesThreshold) {
+    this.writesSinceLastCallback++
+    // 字节阈值覆盖大包场景；写入次数阈值兜底小包高频场景（如 SSH 逐字符 echo），
+    // 否则 bytesWritten 永远凑不到 128KB，pendingCallbacks 恒为 0，背压形同虚设。
+    if (this.bytesWritten > this.bytesThreshold || this.writesSinceLastCallback >= this.writeCountThreshold) {
       this.pendingCallbacks++
       this.stats.maxPendingCallbacks = Math.max(this.stats.maxPendingCallbacks, this.pendingCallbacks)
       this.bytesWritten = 0
+      this.writesSinceLastCallback = 0
       if (!this.blocked && this.pendingCallbacks > this.highWatermark) {
         this.blocked = true
       }
@@ -201,6 +209,8 @@ export class PinnedScroll {
   private pinnedToBottom = true
   private xtermCore: any
   private originalScrollToBottom: (() => void) | null = null
+  /** _scrollToBottom 原始实现，dispose 时还原，保证对私有 API 的改写可逆 */
+  private originalPrivateScrollToBottom: (() => void) | null = null
   private wheelHandler: (e: WheelEvent) => void
   /** 滚轮解 pin 排定的 RAF id，dispose 时取消，避免回调在销毁后访问 xterm.buffer */
   private rafId: number | null = null
@@ -235,6 +245,10 @@ export class PinnedScroll {
       if (this.xtermCore) {
         // 保存原函数引用，dispose 时还原
         this.originalScrollToBottom = this.xtermCore.scrollToBottom.bind(this.xtermCore)
+        // 保存 _scrollToBottom 原始实现，dispose 时一并还原，保证对私有 API 的改写可逆
+        this.originalPrivateScrollToBottom = this.xtermCore._scrollToBottom ?? null
+        // xterm 内部"新输出自动滚底"走 _scrollToBottom，将其重定向到公开 scrollToBottom 实现，
+        // 同时把公开 scrollToBottom 置为空操作，由本管理器接管滚底决策。
         this.xtermCore._scrollToBottom = this.originalScrollToBottom
         this.xtermCore.scrollToBottom = () => null
       }
@@ -445,12 +459,18 @@ export class PinnedScroll {
       cancelAnimationFrame(this.rafId)
       this.rafId = null
     }
-    // 还原原始 scrollToBottom 函数
-    if (this.xtermCore && this.originalScrollToBottom) {
-      this.xtermCore.scrollToBottom = this.originalScrollToBottom
+    // 还原原始 scrollToBottom 与 _scrollToBottom，保证对私有 API 的改写可逆
+    if (this.xtermCore) {
+      if (this.originalScrollToBottom) {
+        this.xtermCore.scrollToBottom = this.originalScrollToBottom
+      }
+      if (this.originalPrivateScrollToBottom) {
+        this.xtermCore._scrollToBottom = this.originalPrivateScrollToBottom
+      }
     }
     this.xtermCore = null
     this.originalScrollToBottom = null
+    this.originalPrivateScrollToBottom = null
     // 级联销毁背压控制器，释放阻塞中的等待者
     this.flowControl.dispose()
   }

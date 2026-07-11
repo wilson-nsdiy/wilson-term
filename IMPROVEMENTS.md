@@ -31,8 +31,8 @@ function hasXTermCore(term: Terminal): term is Terminal & XTermInternals {
 ```typescript
 const TESTED_XTERM_VERSIONS = ['5.5.0']
 
-function checkXTermVersion(term: Terminal): void {
-  const version = (term as any).version || (term as any)._core?.version || 'unknown'
+function checkXTermVersion(): void {
+  const version = getXTermVersion() // 运行时 require('@xterm/xterm/package.json').version
   if (!TESTED_XTERM_VERSIONS.includes(version)) {
     console.warn(`[xtermEnhancements] 当前 xterm 版本 (${version}) 未经过测试`)
   }
