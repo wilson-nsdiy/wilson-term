@@ -52,7 +52,8 @@ const DEFAULT_FORM = {
   backgroundOpacity: 1,
   cursorStyle: 'block' as AppSettings['cursorStyle'],
   cursorBlink: true,
-  scrollback: 10000
+  scrollback: 10000,
+  renderer: 'webgl' as AppSettings['renderer']
 }
 
 const GlobalOptionsDialog: React.FC<GlobalOptionsDialogProps> = ({ open, onClose }) => {
@@ -75,7 +76,8 @@ const GlobalOptionsDialog: React.FC<GlobalOptionsDialogProps> = ({ open, onClose
     backgroundOpacity: settings.backgroundOpacity,
     cursorStyle: settings.cursorStyle,
     cursorBlink: settings.cursorBlink,
-    scrollback: settings.scrollback
+    scrollback: settings.scrollback,
+    renderer: settings.renderer
   })
 
   const [activeTab, setActiveTab] = useState<TabKey>('appearance')
@@ -100,7 +102,8 @@ const GlobalOptionsDialog: React.FC<GlobalOptionsDialogProps> = ({ open, onClose
     backgroundOpacity: settings.backgroundOpacity,
     cursorStyle: settings.cursorStyle,
     cursorBlink: settings.cursorBlink,
-    scrollback: settings.scrollback
+    scrollback: settings.scrollback,
+    renderer: settings.renderer
   })
 
   useEffect(() => {
@@ -144,7 +147,8 @@ const GlobalOptionsDialog: React.FC<GlobalOptionsDialogProps> = ({ open, onClose
       backgroundOpacity: form.backgroundOpacity,
       cursorStyle: form.cursorStyle,
       cursorBlink: form.cursorBlink,
-      scrollback: form.scrollback
+      scrollback: form.scrollback,
+      renderer: form.renderer
     })
     onClose()
   }
@@ -482,6 +486,32 @@ const GlobalOptionsDialog: React.FC<GlobalOptionsDialogProps> = ({ open, onClose
                         step={100}
                       />
                       <p className="mt-1.5 text-xs text-gray-500">0 = 无回滚</p>
+                    </div>
+                    <div>
+                      <label className={labelClass}>渲染器</label>
+                      <p className="mt-1.5 mb-2.5 text-xs text-gray-500">
+                        WebGL 加速渲染性能最佳，适用于高频输出场景；Canvas 为兼容后备；DOM 兼容性最高但性能较低。更改需重新打开终端生效。
+                      </p>
+                      <div className="flex gap-2">
+                        {([
+                          { value: 'webgl', label: 'WebGL（推荐）' },
+                          { value: 'canvas', label: 'Canvas' },
+                          { value: 'dom', label: 'DOM' }
+                        ] as const).map((opt) => (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => updateForm('renderer', opt.value)}
+                            className={`px-4 py-1.5 rounded text-sm transition-colors ${
+                              form.renderer === opt.value
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-gray-300'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
