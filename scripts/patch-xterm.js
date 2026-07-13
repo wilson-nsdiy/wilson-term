@@ -126,6 +126,27 @@ patchFile('../addon-web-links/lib/addon-web-links.js', [
    '(()=>{const f=t.flags.includes("g")?t.flags:t.flags+"g";return new RegExp(t.source,f)})()']
 ]);
 
+// === Dispose 时序缺陷: RenderService.dimensions getter 在 renderer 已 dispose 后抛错 ===
+// xterm 5.5.0 的 Viewport 构造时排了一个裸 setTimeout(() => this.syncScrollArea())（Viewport.ts:84），
+// 该 setTimeout 未注册到 disposable，dispose 时不会清理。而 Terminal.dispose() 按注册逆序
+// 先 dispose viewport、后 dispose _renderService（清空 _renderer.value）。若该 setTimeout 在
+// _renderService 被 dispose 之后才触发，syncScrollArea → this._renderService.dimensions →
+// getter `return this._renderer.value!.dimensions` 会因 _renderer.value 为 undefined 抛
+// `Cannot read properties of undefined (reading 'dimensions')`，且无 try/catch → Uncaught。
+// 触发场景：标签页快速切换/关闭导致 TerminalInstance 卸载、xterm.open 后不久即 dispose。
+// 修复：getter 在 renderer 为空时返回零值 dimensions 对象，让所有消费者（Viewport /
+// AccessibilityManager / BufferDecorationRenderer / CompositionHelper）在 dispose 后拿到 0
+// 尺寸安全短路，而非抛 Uncaught。零值结构与 createRenderDimensions() 一致。
+// 同时打 src 与 lib，保持源码可读与运行时生效一致（与 PR #6004 的双打模式相同）。
+patchFile('src/browser/services/RenderService.ts', [
+  ['public get dimensions(): IRenderDimensions { return this._renderer.value!.dimensions; }',
+   'public get dimensions(): IRenderDimensions { return this._renderer.value ? this._renderer.value.dimensions : { css: { canvas: { width: 0, height: 0 }, cell: { width: 0, height: 0 } }, device: { canvas: { width: 0, height: 0 }, cell: { width: 0, height: 0 }, char: { width: 0, height: 0, left: 0, top: 0 } } }; }']
+]);
+patchFile('lib/xterm.js', [
+  ['get dimensions(){return this._renderer.value.dimensions}',
+   'get dimensions(){return this._renderer.value?this._renderer.value.dimensions:{css:{canvas:{width:0,height:0},cell:{width:0,height:0}},device:{canvas:{width:0,height:0},cell:{width:0,height:0},char:{width:0,height:0,left:0,top:0}}}}']
+]);
+
 if (patched === 0) {
   console.log('No patches applied (already patched or files changed).');
 } else {
