@@ -11,7 +11,8 @@
  * 这三项都围绕 xterm 实例运作，封装在此以便 TerminalInstance 保持简洁。
  *
  * 访问 xterm 内部 _core API（scrollToBottom/_renderService 等）无官方类型声明，
- * 故使用 any；渲染器 addon 在 Electron 渲染进程通过 require 同步加载。
+ * 故使用 any；渲染器 addon 通过构建期静态 import 加载（见下方 import 与
+ * RendererManager 说明）。
  *
  * 注意：xterm 5.5.0 的 _core 上不存在 _scrollToBottom 私有方法（早期版本照搬
  * tabby 的实现误以为存在）。新输出自动滚底由 BufferService.scroll() 中的
@@ -19,8 +20,15 @@
  * 用户输入触发的滚底由 scrollOnUserInput 选项控制。故本模块改用官方选项
  * scrollOnUserInput=false 接管滚底决策，不再改写 _core.scrollToBottom。
  */
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Terminal } from '@xterm/xterm'
+// 渲染器 addon 改为构建期静态 import。原本用 require('@xterm/addon-webgl') 动态加载，
+// 但渲染进程是 Vite 打包的 ESM 且 nodeIntegration=false，运行时没有 require，
+// 动态 require 会抛错被 catch 吞掉，导致 WebGL/Canvas 渲染器始终加载失败、静默
+// 回退到 DOM。静态 import 由 Vite 预打包转换（addon 是 CJS，Vite 会处理），
+// 让渲染器真正可用。代价是 addon 体积进入 bundle，但它们本就是项目依赖。
+import { WebglAddon } from '@xterm/addon-webgl'
+import { CanvasAddon } from '@xterm/addon-canvas'
 
 /** xterm 内部 API 结构（无官方类型，仅用于运行时检测） */
 interface XTermInternals {
@@ -41,21 +49,17 @@ function hasXTermCore(term: Terminal): term is Terminal & XTermInternals {
 /** 在本增强模块测试过的 xterm 版本 */
 const TESTED_XTERM_VERSIONS = ['5.5.0']
 
-/** 缓存的 xterm 版本号，运行时从 package.json 读取一次 */
-let cachedXtermVersion: string | null = null
-
-/** 获取 xterm 版本号 */
+/**
+ * 获取 xterm 版本号。
+ *
+ * 版本在构建期由 electron.vite.config.ts 的 renderer.define 从
+ * @xterm/xterm/package.json 静态注入为 __XTERM_VERSION__。渲染进程是 Vite 打包的
+ * ESM 且 nodeIntegration=false，运行时既无 require，也无法靠
+ * require('@xterm/xterm/package.json') 这种子路径导入读版本（Vite 默认不优化
+ * 包的子路径导入，运行时会抛错）。故改用构建期注入，避免误报 'unknown'。
+ */
 function getXTermVersion(): string {
-  if (cachedXtermVersion) return cachedXtermVersion
-
-  try {
-    // 在 Electron 渲染进程中通过 require 同步读取版本
-    const pkg = require('@xterm/xterm/package.json')
-    cachedXtermVersion = pkg.version || 'unknown'
-  } catch {
-    cachedXtermVersion = 'unknown'
-  }
-  return cachedXtermVersion
+  return __XTERM_VERSION__
 }
 
 /** 检查 xterm 版本兼容性（非阻断，仅警告），全局只检查一次 */
@@ -538,8 +542,6 @@ export class RendererManager {
 
   private attachWebGL(): boolean {
     try {
-      // 动态导入避免在不需要 WebGL 时加载该 addon 体积
-      const WebglAddon = require('@xterm/addon-webgl').WebglAddon
       const addon = new WebglAddon()
       addon.onContextLoss(() => this.onContextLoss())
       this.xterm.loadAddon(addon)
@@ -567,7 +569,6 @@ export class RendererManager {
 
   private attachCanvas(): void {
     try {
-      const CanvasAddon = require('@xterm/addon-canvas').CanvasAddon
       const addon = new CanvasAddon()
       // Canvas 渲染器也会丢失 2D 上下文，注册恢复回调
       if (addon.onContextLoss) {
