@@ -108,7 +108,7 @@ export class BashConnection extends BaseConnection {
       } catch (err) {
         console.error(`[Bash] ${this.sessionId} 启动失败:`, err)
         appLogger.error('Bash', err)
-        reject(new Error(`启动本地终端失败: ${(err as Error).message}`))
+        reject(new Error(`启动本地终端失败: ${(err as Error).message}`, { cause: err }))
       }
     })
   }
