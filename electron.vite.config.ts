@@ -21,7 +21,8 @@ try {
   console.error('❌ 无法读取 @xterm/xterm 版本:', err)
   throw new Error(
     '构建失败：@xterm/xterm 未安装或 package.json 格式异常。' +
-    '请确保已运行 npm install 且依赖完整安装。'
+    '请确保已运行 npm install 且依赖完整安装。',
+    { cause: err }
   )
 }
 
