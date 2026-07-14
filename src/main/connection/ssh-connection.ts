@@ -255,7 +255,7 @@ export class SSHConnection extends BaseConnection {
           if (agentPath) connectConfig.agent = agentPath
           if (defaultKey) {
             try { connectConfig.privateKey = await readFile(defaultKey) }
-            catch { throw new Error(`免密认证失败：无法读取密钥文件 "${defaultKey}"，请检查文件权限`) }
+            catch (err) { throw new Error(`免密认证失败：无法读取密钥文件 "${defaultKey}"，请检查文件权限`, { cause: err }) }
           }
           needPasswordFallback = true
         }
@@ -280,7 +280,7 @@ export class SSHConnection extends BaseConnection {
         if (agentPath) connectConfig.agent = agentPath
         if (defaultKey) {
           try { connectConfig.privateKey = await readFile(defaultKey) }
-          catch { throw new Error(`免密认证失败：无法读取密钥文件 "${defaultKey}"，请检查文件权限`) }
+          catch (err) { throw new Error(`免密认证失败：无法读取密钥文件 "${defaultKey}"，请检查文件权限`, { cause: err }) }
         }
         needPasswordFallback = true
         break
@@ -423,7 +423,7 @@ export class SSHConnection extends BaseConnection {
         client.shell({ rows: 24, cols: 80, term: 'xterm-256color' }, (err, stream) => {
           if (err) {
             client.end()
-            reject(new Error(`创建 shell 失败: ${err.message}`))
+            reject(new Error(`创建 shell 失败: ${err.message}`, { cause: err }))
             return
           }
 
@@ -452,7 +452,7 @@ export class SSHConnection extends BaseConnection {
 
         if (!this.fulfilled) {
           this.fulfilled = true
-          reject(new Error(message))
+          reject(new Error(message, { cause: err }))
         } else {
           // 已连接后出错：放宽 statusSent 让 emitStatus 真正下发 disconnected
           this.statusSent = false
@@ -563,7 +563,7 @@ export class SSHConnection extends BaseConnection {
 
         client.shell({ rows: 24, cols: 80, term: 'xterm-256color' }, (err, stream) => {
           if (err) {
-            finish(() => reject(new Error(`创建 shell 失败: ${err.message}`)))
+            finish(() => reject(new Error(`创建 shell 失败: ${err.message}`, { cause: err })))
             return
           }
           if (settled) {

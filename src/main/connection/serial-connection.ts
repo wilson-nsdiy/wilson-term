@@ -44,11 +44,11 @@ export class SerialConnection extends BaseConnection {
         if (err) {
           const msg = err.message || ''
           if (/Access denied|EACCES|EPERM|busy/i.test(msg)) {
-            reject(new Error(`串口 ${config.path} 已被其他程序占用，请关闭占用该串口的程序后重试`))
+            reject(new Error(`串口 ${config.path} 已被其他程序占用，请关闭占用该串口的程序后重试`, { cause: err }))
           } else if (/error code 31|ERROR_GEN_FAILURE|GetOverlappedResult/i.test(msg)) {
-            reject(new Error(`串口 ${config.path} 设备异常，请检查设备连接或重新插拔后重试`))
+            reject(new Error(`串口 ${config.path} 设备异常，请检查设备连接或重新插拔后重试`, { cause: err }))
           } else {
-            reject(new Error(`打开串口失败: ${msg}`))
+            reject(new Error(`打开串口失败: ${msg}`, { cause: err }))
           }
           return
         }
