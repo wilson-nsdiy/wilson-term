@@ -65,7 +65,7 @@ const TabBar: React.FC = () => {
               onDragOver={(e) => handleDragOver(e, index)}
               onDragEnd={handleDragEnd}
               onClick={() => handleTabClick(session.id)}
-              className={`relative flex items-center gap-2 px-3 py-1 rounded-t text-sm cursor-pointer transition-colors select-none ${
+              className={`relative flex items-center gap-2 px-3 py-1 rounded-t text-sm cursor-pointer transition-colors select-none flex-shrink-0 whitespace-nowrap ${
                 session.id === activeSessionId
                   ? 'bg-gray-700 text-gray-200'
                   : 'text-gray-400 hover:bg-gray-750 hover:text-gray-300'
@@ -89,7 +89,7 @@ const TabBar: React.FC = () => {
               }`}>
                 {session.config.type === 'ssh' ? 'SSH' : session.config.type === 'telnet' ? 'TLN' : session.config.type === 'bash' ? 'BASH' : 'SRL'}
               </span>
-              <span>{session.config.name}</span>
+              <span className="max-w-[160px] truncate">{session.config.name}</span>
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
                   session.status === 'connected'

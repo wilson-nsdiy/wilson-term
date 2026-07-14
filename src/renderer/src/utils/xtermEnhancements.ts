@@ -30,22 +30,6 @@ import type { Terminal } from '@xterm/xterm'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { CanvasAddon } from '@xterm/addon-canvas'
 
-/** xterm 内部 API 结构（无官方类型，仅用于运行时检测） */
-interface XTermInternals {
-  _core?: {
-    scrollToBottom?: () => void
-    _renderService?: {
-      clear?: () => void
-      handleResize?: (cols: number, rows: number) => void
-    }
-  }
-}
-
-/** 检测 xterm 是否包含可用的 _core API */
-function hasXTermCore(term: Terminal): term is Terminal & XTermInternals {
-  return '_core' in term && typeof (term as any)._core === 'object'
-}
-
 /** 在本增强模块测试过的 xterm 版本 */
 const TESTED_XTERM_VERSIONS = ['5.5.0']
 
@@ -112,6 +96,8 @@ export class FlowControl {
   private readonly bytesThreshold = 1024 * 128
   /** 写入次数阈值：小包高频场景下，累计到此次数即使未达字节阈值也注册回调采样 pending，避免背压永不触发 */
   private readonly writeCountThreshold = 64
+  /** 已提交给 xterm、等待 parser completion callback 的写入完成器 */
+  private pendingWriteFinishers = new Set<() => void>()
   private disposed = false
   private stats = {
     totalWrites: 0,
@@ -124,8 +110,6 @@ export class FlowControl {
 
   async write(data: string): Promise<void> {
     // dispose 后不再写入，避免向已销毁的 xterm 实例写入。
-    // 非阻塞分支无 await、同步执行不会被 dispose 打断，故入口检查与下方
-    // 阻塞分支 await 后的 disposed 复查共同覆盖全部时序。
     if (this.disposed) return
     this.stats.totalWrites++
     this.stats.totalBytes += data.length
@@ -136,14 +120,17 @@ export class FlowControl {
       await new Promise<void>((resolve) => {
         this.resolveQueue.push(resolve)
       })
-      // await 期间可能已 dispose，停止后续对 xterm 的访问，避免写入已销毁实例
+      // await 期间可能已 dispose，停止后续对 xterm 的访问
       if (this.disposed) return
     }
+
     this.bytesWritten += data.length
     this.writesSinceLastCallback++
-    // 字节阈值覆盖大包场景；写入次数阈值兜底小包高频场景（如 SSH 逐字符 echo），
-    // 否则 bytesWritten 永远凑不到 128KB，pendingCallbacks 恒为 0，背压形同虚设。
-    if (this.bytesWritten > this.bytesThreshold || this.writesSinceLastCallback >= this.writeCountThreshold) {
+    // 每次写入都等待 xterm parser completion callback，保证调用方读取到更新后的
+    // buffer 状态；只有命中采样阈值的 callback 才参与高低水位背压统计。
+    const trackedForBackpressure =
+      this.bytesWritten > this.bytesThreshold || this.writesSinceLastCallback >= this.writeCountThreshold
+    if (trackedForBackpressure) {
       this.pendingCallbacks++
       this.stats.maxPendingCallbacks = Math.max(this.stats.maxPendingCallbacks, this.pendingCallbacks)
       this.bytesWritten = 0
@@ -151,19 +138,40 @@ export class FlowControl {
       if (!this.blocked && this.pendingCallbacks > this.highWatermark) {
         this.blocked = true
       }
-      this.xterm.write(data, () => {
-        this.pendingCallbacks--
-        if (this.blocked && this.pendingCallbacks < this.lowWatermark) {
-          this.blocked = false
-          // 逐个释放等待者；resolveQueue 在阻塞解除后应清空
-          while (this.resolveQueue.length > 0) {
-            this.resolveQueue.shift()?.()
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = (): void => settle()
+      const settle = (error?: unknown): void => {
+        if (settled) return
+        settled = true
+        this.pendingWriteFinishers.delete(finish)
+
+        if (trackedForBackpressure && this.pendingCallbacks > 0) {
+          this.pendingCallbacks--
+          if (this.blocked && this.pendingCallbacks < this.lowWatermark) {
+            this.blocked = false
+            // 逐个释放等待者；resolveQueue 在阻塞解除后应清空
+            while (this.resolveQueue.length > 0) {
+              this.resolveQueue.shift()?.()
+            }
           }
         }
-      })
-    } else {
-      this.xterm.write(data)
-    }
+        if (error === undefined) {
+          resolve()
+        } else {
+          reject(error)
+        }
+      }
+
+      this.pendingWriteFinishers.add(finish)
+      try {
+        this.xterm.write(data, finish)
+      } catch (e) {
+        settle(e)
+      }
+    })
   }
 
   /** 获取性能统计数据 */
@@ -175,21 +183,25 @@ export class FlowControl {
   }
 
   /**
-   * 销毁并清理资源：解除所有阻塞中的等待者，避免组件卸载后 Promise 永不 resolve
-   * 造成闭包引用泄漏。xterm.write 的完成回调在 xterm 销毁后不一定触发，
-   * 故不能依赖回调来释放等待者。dispose 后的 write 调用会在 await 解除后安全跳过。
+   * 销毁并清理资源：解除高水位阻塞等待者和等待 xterm callback 的写入，避免
+   * callback 在 xterm 销毁后不再触发而令 writeChain 永久挂起。完成器是幂等的，
+   * callback 若在 dispose 后到达也不会重复结算。
    */
   dispose(): void {
     this.disposed = true
     this.blocked = false
-    this.pendingCallbacks = 0
-    // 逐个 resolve 等待者以解除阻塞；write 在 await 后会因 disposed 检查而跳过 xterm 访问。
-    // 用 resolve 而非 reject：PinnedScroll.writeChain 已统一 catch，reject 会冒泡为
-    // unhandledrejection，且写入未完成对用户无意义，安全解除阻塞即可。
-    const waiters = this.resolveQueue.splice(0)
-    for (const resolve of waiters) {
+
+    const blockedWaiters = this.resolveQueue.splice(0)
+    for (const resolve of blockedWaiters) {
       resolve()
     }
+
+    const writeFinishers = Array.from(this.pendingWriteFinishers)
+    for (const finish of writeFinishers) {
+      finish()
+    }
+    this.pendingWriteFinishers.clear()
+    this.pendingCallbacks = 0
   }
 }
 
@@ -216,16 +228,15 @@ export interface PinnedScrollStats {
  */
 export class PinnedScroll {
   private pinnedToBottom = true
-  private xtermCore: any
-  /** _core.scrollToBottom 的 bound 副本，供本管理器主动滚底时直接调用 */
-  private originalScrollToBottom: (() => void) | null = null
   private wheelHandler: (e: WheelEvent) => void
-  /** 滚轮解 pin 排定的 RAF id，dispose 时取消，避免回调在销毁后访问 xterm.buffer */
+  /** 滚轮状态同步 RAF id，dispose 时取消，避免回调在销毁后访问 xterm.buffer */
   private rafId: number | null = null
+  /** 明确的用户滚动意图版本；异步写入不得应用更早版本捕获的视口快照 */
+  private scrollGeneration = 0
+  private scrollDisposable: { dispose: () => void } | null = null
+  private static readonly BOTTOM_TOLERANCE = 1
   /** 写入串行化锁：onData 回调同步触发多次时，保证 write 按序执行，避免背压与滚动位置错乱 */
   private writeChain: Promise<void> = Promise.resolve()
-  /** 降级模式：_core API 不可用时回退到基础行为 */
-  private degradedMode = false
   /** 已销毁标记 */
   private disposed = false
   /** 错误统计 */
@@ -243,52 +254,44 @@ export class PinnedScroll {
     // 版本兼容性检查（全局只检查一次）
     checkXTermVersion()
 
-    if (!hasXTermCore(xterm)) {
-      console.warn('[PinnedScroll] xterm._core 不可用，启用降级模式（基础滚动功能）')
-      this.degradedMode = true
-      this.xtermCore = null
-    } else {
-      this.xtermCore = (xterm as any)['_core']
-      if (this.xtermCore) {
-        // 接管滚底决策：用官方选项 scrollOnUserInput=false 阻止"用户输入时自动滚底"
-        // （xterm 在用户按键且 ybase!==ydisp 时会触发 onRequestScrollToBottom → scrollToBottom，
-        // 见 CoreService.triggerDataEvent）。这替代了早期版本"置空 _core.scrollToBottom"的做法——
-        // 那种做法会令公开 API Terminal.scrollToBottom() 静默失效，且对"新输出自动滚底"无效
-        // （后者由 BufferService.scroll() 的 isUserScrolling 标志控制，不经过 scrollToBottom）。
-        xterm.options.scrollOnUserInput = false
-        // 保存 scrollToBottom 的 bound 副本，供本管理器主动滚底时直接调用。
-        // 不改写 _core 上的任何方法，避免污染 xterm 内部状态与公开 API。
-        this.originalScrollToBottom = this.xtermCore.scrollToBottom.bind(this.xtermCore)
-      }
-    }
+    // 接管滚底决策：阻止用户输入把历史视图强制拉到底部。主动滚底统一使用
+    // Terminal.scrollToBottom() 公开 API，避免依赖 _core.scrollToBottom。
+    xterm.options.scrollOnUserInput = false
 
     this.wheelHandler = (e: WheelEvent) => {
-      // 滚轮向上立即解除 pinned，确保在下一帧的写入前生效
+      this.scrollGeneration++
+      // 滚轮向上立即解除 pinned，确保在 xterm 实际移动 viewport 前也能阻止写入拉底
       if (e.deltaY < 0) {
         this.pinnedToBottom = false
       }
-      // 取消尚未执行的 RAF 避免回调堆积；dispose 时也会 cancelAnimationFrame
-      if (this.rafId !== null) cancelAnimationFrame(this.rafId)
-      this.rafId = requestAnimationFrame(() => {
-        this.rafId = null
-        this.updatePinnedState()
-      })
+      // 每帧最多同步一次，不能在连续 wheel 时反复取消并把校正推迟到滚动停止后。
+      if (this.rafId === null) {
+        this.rafId = requestAnimationFrame(() => {
+          this.rafId = null
+          this.updatePinnedState()
+        })
+      }
     }
   }
 
-  /** 在终端宿主元素上注册滚轮监听（capture 阶段，xterm 可能在内部元素 stopPropagation） */
+  /** 在终端宿主元素上注册滚轮监听，并用公开 onScroll 补充同步实际 buffer 状态 */
   attach(host: HTMLElement): void {
     if (this.disposed) {
       console.warn('[PinnedScroll] 尝试 attach 已销毁的实例')
       return
     }
     host.addEventListener('wheel', this.wheelHandler, { capture: true, passive: true })
+    if (!this.scrollDisposable) {
+      this.scrollDisposable = this.xterm.onScroll(() => this.updatePinnedState())
+    }
   }
 
   detach(host: HTMLElement): void {
     if (!host) return
     try {
       host.removeEventListener('wheel', this.wheelHandler, { capture: true })
+      this.scrollDisposable?.dispose()
+      this.scrollDisposable = null
     } catch (e) {
       console.warn('[PinnedScroll] detach 失败:', e)
     }
@@ -296,7 +299,7 @@ export class PinnedScroll {
 
   private isAtBottom(): boolean {
     const buffer = this.xterm.buffer.active
-    return buffer.viewportY >= buffer.baseY - 1
+    return buffer.baseY - buffer.viewportY <= PinnedScroll.BOTTOM_TOLERANCE
   }
 
   private updatePinnedState(): void {
@@ -340,44 +343,45 @@ export class PinnedScroll {
     if (this.disposed) return
 
     this.stats.totalWrites++
+    // 在捕获快照前读取实际 buffer，避免依赖尚未执行的 RAF/onScroll。
+    this.updatePinnedState()
+    const writeGeneration = this.scrollGeneration
+    const wasPinned = this.pinnedToBottom
+    const savedViewportY = this.xterm.buffer.active.viewportY
 
-    // 降级模式：直接写入，不做滚动位置控制
-    if (this.degradedMode) {
-      await this.flowControl.write(data)
-      // await 期间可能已 dispose，停止后续对 xterm 的访问
-      if (this.disposed) return
-      this.consecutiveErrors = 0
+    // FlowControl.write 在对应 xterm parser callback 后才完成。
+    await this.flowControl.write(data)
+    if (this.disposed) return
+    this.consecutiveErrors = 0
+
+    if (writeGeneration !== this.scrollGeneration) {
+      // 等待期间出现了新的用户滚动意图，旧快照已经过期，绝不能覆盖当前视口。
+      if (this.isAtBottom()) {
+        this.pinnedToBottom = true
+        this.xterm.scrollToBottom()
+      } else {
+        this.pinnedToBottom = false
+      }
       return
     }
 
-    const wasPinned = this.pinnedToBottom
-    const savedViewportY = this.xterm.buffer.active.viewportY
-    await this.flowControl.write(data)
-    // await 期间组件可能卸载并销毁 xterm，恢复滚动位置前必须重新检查
-    if (this.disposed) return
-    this.consecutiveErrors = 0 // 写入成功，重置错误计数
-
     if (wasPinned) {
-      this.originalScrollToBottom?.()
+      this.pinnedToBottom = true
+      this.xterm.scrollToBottom()
     } else {
-      // 恢复用户滚动位置 —— xterm 在快速输出时会扰动 viewportY，
-      // 需手动恢复到写入前的位置，避免视图被带偏。
       const maxScroll = this.xterm.buffer.active.baseY
       const targetY = Math.min(savedViewportY, maxScroll)
       if (this.xterm.buffer.active.viewportY !== targetY) {
         this.xterm.scrollToLine(targetY)
       }
+      this.pinnedToBottom = false
     }
   }
 
   /** 用户主动滚到底部（如点击状态栏或快捷键） */
   scrollToBottom(): void {
     this.pinnedToBottom = true
-    if (!this.degradedMode) {
-      this.originalScrollToBottom?.()
-    } else {
-      this.xterm.scrollToBottom()
-    }
+    this.xterm.scrollToBottom()
   }
 
   /**
@@ -404,11 +408,7 @@ export class PinnedScroll {
     // await 期间组件可能卸载并销毁 xterm，停止后续访问
     if (this.disposed) return
 
-    if (!this.degradedMode) {
-      this.originalScrollToBottom?.()
-    } else {
-      this.xterm.scrollToBottom()
-    }
+    this.xterm.scrollToBottom()
   }
 
   /**
@@ -422,22 +422,28 @@ export class PinnedScroll {
   withScrollPreservation(fn: () => void, forceRepaint = false): void {
     if (this.disposed) return
 
-    if (this.degradedMode) {
-      fn()
-      return
-    }
-
+    this.updatePinnedState()
+    const generation = this.scrollGeneration
     const wasPinned = this.pinnedToBottom
     const savedViewportY = this.xterm.buffer.active.viewportY
     fn()
-    if (wasPinned) {
-      this.originalScrollToBottom?.()
-    } else {
-      const maxScroll = this.xterm.buffer.active.baseY
-      const targetY = Math.min(savedViewportY, maxScroll)
-      if (this.xterm.buffer.active.viewportY !== targetY) {
-        this.xterm.scrollToLine(targetY)
+
+    // fn 当前均为同步 fit；generation 检查防止未来同步重入引入过期快照恢复。
+    if (generation === this.scrollGeneration) {
+      if (wasPinned) {
+        this.pinnedToBottom = true
+        this.xterm.scrollToBottom()
+      } else {
+        const maxScroll = this.xterm.buffer.active.baseY
+        const targetY = Math.min(savedViewportY, maxScroll)
+        if (this.xterm.buffer.active.viewportY !== targetY) {
+          this.xterm.scrollToLine(targetY)
+        }
+        this.pinnedToBottom = false
       }
+    } else {
+      this.updatePinnedState()
+      if (this.pinnedToBottom) this.xterm.scrollToBottom()
     }
     if (forceRepaint) {
       // 公开 API：所有渲染器（DOM/Canvas/WebGL）均支持，立即触发全屏重绘
@@ -467,11 +473,9 @@ export class PinnedScroll {
       cancelAnimationFrame(this.rafId)
       this.rafId = null
     }
-    // 本管理器未改写 _core 上的任何方法（构造时仅保存 bound 副本与设置官方选项），
-    // 故无需还原 _core 状态；xterm 实例随后会被外层 dispose，选项随之失效。
-    this.xtermCore = null
-    this.originalScrollToBottom = null
-    // 级联销毁背压控制器，释放阻塞中的等待者
+    this.scrollDisposable?.dispose()
+    this.scrollDisposable = null
+    // 级联销毁背压控制器，释放阻塞与等待 callback 的写入
     this.flowControl.dispose()
   }
 }
