@@ -80,7 +80,7 @@ export class TelnetConnection extends BaseConnection {
           if (/ECONNREFUSED/.test(message)) message = `连接被拒绝：${config.host}:${config.port}，请检查主机地址和端口`
           else if (/ENOTFOUND/.test(message)) message = `无法解析主机名：${config.host}`
           else if (/ETIMEDOUT/.test(message)) message = `连接超时：${config.host}:${config.port}`
-          reject(new Error(message))
+          reject(new Error(message, { cause: err }))
         } else {
           // 连接已建立后收到错误（如对端 RST）：放宽 statusSent 让 emitStatus 真正下发 disconnected
           this.statusSent = false
