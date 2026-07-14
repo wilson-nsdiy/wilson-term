@@ -127,6 +127,48 @@ docs/
 - 自动更新需网络路径可达
 - 原生模块（serialport、ssh2、node-pty）通过 asarUnpack 排除在 asar 外
 
+## AtomCode 自动化配置
+
+Wilson Term 项目配置了 AtomCode AI 编码助手的自动化工具链，包含以下组件：
+
+### Skills
+
+| Skill | 来源 | 用途 |
+|-------|------|------|
+| **electron-development** | mindrally/skills（社区） | Electron 开发最佳实践 |
+| **vercel-react-best-practices** | vercel-labs/agent-skills（社区） | React 18 编码规范 |
+| **typescript-advanced-types** | wshobson/agents（社区） | TypeScript 高级类型指导 |
+| **tailwind-css-patterns** | giuseppe-trisciuoglio/developer-kit（社区） | Tailwind CSS 模式库 |
+| **new-component** | 项目自定义 | 生成新 React 组件模板 → `/new-component 组件名` |
+| **project-conventions** | 项目自定义 | 自动加载项目编码规范（AtomCode 后台使用） |
+
+### Subagents（自动审查）
+
+| Subagent | 用途 | 触发方式 |
+|----------|------|----------|
+| **security-reviewer** | SSH 认证、密钥管理、密码处理安全审查 | 自动运行 |
+| **ui-reviewer** | Catppuccin Mocha 主题一致性、暗色可访问性审查 | 自动运行 |
+| **test-writer** | 连接模块/工具函数测试生成 | `/test-writer 模块路径` |
+
+### MCP Servers
+
+配置在 `.mcp.json` 中（需重启 AtomCode 生效）：
+
+| Server | 用途 | 配置要求 |
+|--------|------|----------|
+| **context7** | 实时文档查询（xterm.js、ssh2、serialport、electron 等） | 无需额外配置 |
+| **GitLab** | Gitee 仓库集成（Issue/MR/CI Pipeline） | 需在 `.mcp.json` 填入 `GITLAB_PERSONAL_ACCESS_TOKEN` |
+
+### Hooks（自动触发器）
+
+配置在 `.atomcode/settings.json` 中：
+
+| Hook | 触发时机 | 行为 |
+|------|----------|------|
+| **ESLint 自动修复** | 每次 Edit/Write 操作后 | 自动执行 `eslint --fix` |
+| **TypeScript 类型检查** | 每次 Edit/Write 操作后 | 自动执行 `tsc --noEmit` |
+| **阻止编辑 package-lock.json** | 尝试编辑 lock 文件时 | 禁止直接修改，提示使用 `npm install` |
+
 ## 许可证
 
 私有项目

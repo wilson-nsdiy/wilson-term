@@ -52,3 +52,7 @@ plugins/*/*.zip
 .codegraph/
 .qoder/
 .mimocode/
+
+# AtomCode config (machine-specific, includes hooks with absolute paths)
+.atomcode/
+.mcp.json
