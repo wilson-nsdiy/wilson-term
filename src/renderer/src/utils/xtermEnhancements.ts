@@ -231,6 +231,13 @@ export class PinnedScroll {
   private wheelHandler: (e: WheelEvent) => void
   /** 滚轮状态同步 RAF id，dispose 时取消，避免回调在销毁后访问 xterm.buffer */
   private rafId: number | null = null
+  /**
+   * 向下滚轮的延迟帧 RAF id。
+   * 向下滚到底部时需等 xterm 把滚轮事件应用到 viewportY 后再读 isAtBottom，
+   * 故安排嵌套 RAF：第一帧等待 xterm 处理滚轮，第二帧再判定是否恢复 pinned。
+   * 向上滚时取消此延迟帧，避免后续误判回 pinned。
+   */
+  private delayedRafId: number | null = null
   /** 明确的用户滚动意图版本；异步写入不得应用更早版本捕获的视口快照 */
   private scrollGeneration = 0
   private scrollDisposable: { dispose: () => void } | null = null
@@ -260,9 +267,28 @@ export class PinnedScroll {
 
     this.wheelHandler = (e: WheelEvent) => {
       this.scrollGeneration++
-      // 滚轮向上立即解除 pinned，确保在 xterm 实际移动 viewport 前也能阻止写入拉底
       if (e.deltaY < 0) {
+        // 滚轮向上立即解除 pinned，确保在 xterm 实际移动 viewport 前也能阻止写入拉底
         this.pinnedToBottom = false
+        // 向上滚时取消待执行的"延迟帧判定"，避免后续误判回 pinned
+        if (this.delayedRafId !== null) {
+          cancelAnimationFrame(this.delayedRafId)
+          this.delayedRafId = null
+        }
+      } else {
+        // 滚轮向下：不立即操作，安排嵌套延迟帧。第一帧等待 xterm 把滚轮事件应用到
+        // viewportY，第二帧再用 isAtBottom 判定是否已到底部、恢复 pinnedToBottom。
+        // 修复：用户回看历史时向下滚到底部，后续新输出应能自动跟随到底部。
+        if (this.delayedRafId === null) {
+          this.delayedRafId = requestAnimationFrame(() => {
+            // 第一帧：xterm 已处理滚轮事件，viewportY 已更新。
+            // 安排第二帧做最终判定，delayedRafId 改持第二帧 id 供取消。
+            this.delayedRafId = requestAnimationFrame(() => {
+              this.delayedRafId = null
+              this.updatePinnedState()
+            })
+          })
+        }
       }
       // 每帧最多同步一次，不能在连续 wheel 时反复取消并把校正推迟到滚动停止后。
       if (this.rafId === null) {
@@ -314,7 +340,10 @@ export class PinnedScroll {
 
   /**
    * 写入数据并维护滚动位置。所有终端输出都应通过此方法写入。
-   * 在写入前捕获 pinned 状态与 viewportY（异步写入期间 RAF 回调可能改变状态）。
+   * 在写入前捕获 pinned 状态与 viewportY（异步写入期间 RAF/onScroll 回调可能改变状态）。
+   * 写入完成后：写入前已跟随底部则无条件滚到底部（保证新输出始终可见）；
+   * 写入前在回看历史则按 scrollGeneration 判定是否恢复原位置——等待期间有新滚动
+   * 意图（含向下滚向底部）时绝不拉回，避免抵消用户滚动、使其无法到达底部。
    * 通过写入锁串行化，保证 onData 同步多次回调时背压与滚动位置不被并发破坏。
    * 单次写入失败时记录错误并累计计数，连续错误达到阈值后向用户显示警告。
    */
@@ -349,13 +378,28 @@ export class PinnedScroll {
     const wasPinned = this.pinnedToBottom
     const savedViewportY = this.xterm.buffer.active.viewportY
 
-    // FlowControl.write 在对应 xterm parser callback 后才完成。
+    // FlowControl.write 在对应 xterm parser completion callback 后才完成，await 会跨
+    // setTimeout 边界，期间事件循环空闲，触控板/鼠标的惯性滚动会触发 wheelHandler
+    // 递增 scrollGeneration。
     await this.flowControl.write(data)
     if (this.disposed) return
     this.consecutiveErrors = 0
 
+    if (wasPinned) {
+      // 写入前已跟随底部：新输出无条件滚到底部。不检查 scrollGeneration——await 期间
+      // 触控板惯性上滚会把 scrollGeneration 推高，若据此跳过滚底，回车后视口会停在
+      // 原位、新输出不再跟随，必须手动滚到底部才能恢复（回归 c12dcf6）。惯性滚动并非
+      // 用户"主动回看历史"的明确意图，不应剥夺跟随。
+      // 代价：若用户在底部主动上滚回看，新输出会把他拉回底部——这是重构前的既有行为。
+      this.pinnedToBottom = true
+      this.xterm.scrollToBottom()
+      return
+    }
+
     if (writeGeneration !== this.scrollGeneration) {
-      // 等待期间出现了新的用户滚动意图，旧快照已经过期，绝不能覆盖当前视口。
+      // 写入前在回看历史，且等待期间出现了新的滚动意图（含向下滚向底部）：旧快照已过期，
+      // 绝不能把视口拉回 savedViewportY，否则会抵消用户向下滚动、使其无法到达底部。
+      // 仅按当前实际位置同步 pinned 状态：已在底部则恢复跟随，否则保持回看。
       if (this.isAtBottom()) {
         this.pinnedToBottom = true
         this.xterm.scrollToBottom()
@@ -365,17 +409,14 @@ export class PinnedScroll {
       return
     }
 
-    if (wasPinned) {
-      this.pinnedToBottom = true
-      this.xterm.scrollToBottom()
-    } else {
-      const maxScroll = this.xterm.buffer.active.baseY
-      const targetY = Math.min(savedViewportY, maxScroll)
-      if (this.xterm.buffer.active.viewportY !== targetY) {
-        this.xterm.scrollToLine(targetY)
-      }
-      this.pinnedToBottom = false
+    // 写入前在回看历史，且等待期间无新滚动意图：恢复到写入前的回看位置，
+    // 抵消 xterm 在快速输出时对 viewportY 的扰动。
+    const maxScroll = this.xterm.buffer.active.baseY
+    const targetY = Math.min(savedViewportY, maxScroll)
+    if (this.xterm.buffer.active.viewportY !== targetY) {
+      this.xterm.scrollToLine(targetY)
     }
+    this.pinnedToBottom = false
   }
 
   /** 用户主动滚到底部（如点击状态栏或快捷键） */
@@ -472,6 +513,10 @@ export class PinnedScroll {
     if (this.rafId !== null) {
       cancelAnimationFrame(this.rafId)
       this.rafId = null
+    }
+    if (this.delayedRafId !== null) {
+      cancelAnimationFrame(this.delayedRafId)
+      this.delayedRafId = null
     }
     this.scrollDisposable?.dispose()
     this.scrollDisposable = null
