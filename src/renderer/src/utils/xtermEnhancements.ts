@@ -658,6 +658,9 @@ export class RendererManager {
       console.warn('[RendererManager] WebGL 渲染器加载失败，回退到 Canvas:', e)
       this.webglUnavailable = true
       this.stats.activeRenderer = 'none'
+      // addon 构造失败时 _renderer.value 可能为 undefined，先兜底重建 DOM renderer，
+      // 再让 attachCanvas 尝试切到 Canvas（成功则覆盖 DOM renderer）。
+      this.restoreDomRenderer()
       this.attachCanvas()
       return false
     }
@@ -676,6 +679,34 @@ export class RendererManager {
     } catch (e) {
       console.warn('[RendererManager] Canvas 渲染器加载失败，使用默认 DOM 渲染器:', e)
       this.stats.activeRenderer = 'dom'
+      // 兜底：Canvas addon 构造失败时 _renderer.value 可能为 undefined（旧 renderer 已 dispose），
+      // 此时 _renderService.dimensions 会抛 "Cannot read properties of undefined (reading 'dimensions')"。
+      // 用 xterm 内部 API 重建 DOM renderer，保证 _renderer.value 始终有值。
+      this.restoreDomRenderer()
+    }
+  }
+
+  /**
+   * 当 WebGL/Canvas addon 加载失败、_renderService._renderer.value 为 undefined 时，
+   * 用 xterm 内部 API 重建 DOM renderer 兜底。
+   *
+   * xterm 5.5.0 内部：_core._renderService.setRenderer(_core._createRenderer())，
+   * _createRenderer 返回 DomRenderer 实例。这是 open() 内部 hasRenderer()||setRenderer()
+   * 的同一调用路径，可安全复用。无公开类型声明故用 any。
+   */
+  private restoreDomRenderer(): void {
+    try {
+      const core = (this.xterm as any)['_core']
+      const renderService = core?.['_renderService']
+      // 已有 renderer 则无需重建
+      if (renderService?.hasRenderer?.()) return
+      const renderer = core?._createRenderer?.()
+      if (renderer) {
+        renderService?.setRenderer?.(renderer)
+        this.stats.activeRenderer = 'dom'
+      }
+    } catch (e) {
+      console.warn('[RendererManager] 重建 DOM 渲染器失败:', e)
     }
   }
 
@@ -768,10 +799,13 @@ export class RendererManager {
     if (this.disposed) return
 
     try {
-      // _renderService 可能为 undefined（渲染器尚未附加或已销毁），
-      // 此时 dimensions 不可读，直接跳过重绘
+      // _renderService 可能为 undefined（渲染器尚未附加或已销毁）。
+      // 注意：不要读 renderService.dimensions——该 getter 返回 _renderer.value.dimensions，
+      // 当 _renderer.value 为 undefined（addon 加载失败已 dispose 旧 renderer 但未 setRenderer 新的）
+      // 时会抛 "Cannot read properties of undefined (reading 'dimensions')"。
+      // 用 hasRenderer() 判 renderer 是否就绪，绕开 getter。
       const renderService = this.xtermCore?._renderService
-      if (!renderService?.dimensions) return
+      if (!renderService?.hasRenderer?.()) return
       renderService?.clear?.()
       renderService?.handleResize?.(this.xterm.cols, this.xterm.rows)
     } catch (e) {
