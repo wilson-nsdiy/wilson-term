@@ -34,6 +34,41 @@ import { CanvasAddon } from '@xterm/addon-canvas'
 const TESTED_XTERM_VERSIONS = ['5.5.0']
 
 /**
+ * 安全地执行 fitAddon.fit()。
+ *
+ * xterm 5.5.0 的 get dimensions() 读取 this._renderService.dimensions，
+ * 当渲染器尚未附加（_renderService 为 undefined）、容器尺寸为 0
+ * （隐藏标签页尚未布局）、或终端已 dispose 时，fit 会抛出
+ * "Cannot read properties of undefined (reading 'dimensions')"。
+ *
+ * 本助手在调用前检查终端是否已 disposed、容器是否有真实尺寸、
+ * _renderService 是否就绪，并在异常时静默吞掉，避免单次 fit 失败
+ * 中断 UI 流程。
+ */
+export function safeFit(
+  xterm: Terminal | null | undefined,
+  fitAddon: { fit: () => void } | null | undefined
+): void {
+  if (!xterm || !fitAddon) return
+  // 终端已 dispose 时 element 通常为 undefined
+  // element 是 @xterm/xterm 公开类型属性（readonly element: HTMLElement | undefined）
+  const el = xterm.element
+  if (!el) return
+  // 容器无尺寸时 fit 无意义且可能触发 dimensions 抛错
+  if (el.clientWidth <= 0 || el.clientHeight <= 0) return
+  // 渲染器尚未附加时跳过（_renderService.dimensions 会抛错）
+  const core = (xterm as any)['_core']
+  const renderService = core?.['_renderService']
+  if (!renderService) return
+  try {
+    fitAddon.fit()
+  } catch (e) {
+    // 渲染器竞态等偶发错误：记录日志以便诊断持久性失败
+    console.warn('[safeFit] fit 失败:', e)
+  }
+}
+
+/**
  * 获取 xterm 版本号。
  *
  * 版本在构建期由 electron.vite.config.ts 的 renderer.define 从
@@ -733,7 +768,10 @@ export class RendererManager {
     if (this.disposed) return
 
     try {
+      // _renderService 可能为 undefined（渲染器尚未附加或已销毁），
+      // 此时 dimensions 不可读，直接跳过重绘
       const renderService = this.xtermCore?._renderService
+      if (!renderService?.dimensions) return
       renderService?.clear?.()
       renderService?.handleResize?.(this.xterm.cols, this.xterm.rows)
     } catch (e) {
