@@ -426,6 +426,18 @@ export class PinnedScroll {
   }
 
   /**
+   * 用户主动输入（按键、粘贴、回车等）时调用。
+   * 用户输入意味着"结束回看、准备查看新输出"，故退出回看状态并滚到底部，
+   * 后续远端回显与命令输出即可自动跟随底部，无需手动滚动。
+   * scrollOnUserInput=false 已接管此决策，xterm 默认行为不再介入。
+   */
+  onUserInput(): void {
+    if (this.disposed) return
+    this.pinnedToBottom = true
+    this.xterm.scrollToBottom()
+  }
+
+  /**
    * 写入应用生成的状态提示（连接中/成功/断开等）并强制滚到底部。
    * 通过 writeChain 串行化，保证与远端数据流的相对顺序（不会插到尚未渲染的远端数据之前），
    * 同时强制 pin 到底部，确保用户始终能看到这些提示。
