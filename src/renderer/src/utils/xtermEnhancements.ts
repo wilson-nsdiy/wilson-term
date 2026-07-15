@@ -56,16 +56,80 @@ export function safeFit(
   if (!el) return
   // 容器无尺寸时 fit 无意义且可能触发 dimensions 抛错
   if (el.clientWidth <= 0 || el.clientHeight <= 0) return
-  // 渲染器尚未附加时跳过（_renderService.dimensions 会抛错）
+  // 渲染器尚未就绪时跳过（_renderService.dimensions getter 会抛错）。
+  // 关键：不能读 renderService.dimensions 自身判空——getter 是 return this._renderer.value!.dimensions，
+  // 当 MutableDisposable 已 dispose（xterm.dispose() 链触发后 _isDisposed=true，value 永远 undefined）
+  // 时读 .dimensions 即抛 "Cannot read properties of undefined (reading 'dimensions')"。
+  // 用 hasRenderer() 判 _renderer.value 是否就绪，绕开 getter。
   const core = (xterm as any)['_core']
   const renderService = core?.['_renderService']
-  if (!renderService) return
+  if (!renderService?.hasRenderer?.()) return
   try {
     fitAddon.fit()
   } catch (e) {
     // 渲染器竞态等偶发错误：记录日志以便诊断持久性失败
     console.warn('[safeFit] fit 失败:', e)
   }
+}
+
+/**
+ * 全局拦截 xterm 内部 RenderService 的 dimensions getter，根治
+ * "Cannot read properties of undefined (reading 'dimensions')" 崩溃。
+ *
+ * 根因（xterm 5.5.0 源码 src/browser/services/RenderService.ts:50）：
+ *   public get dimensions(): IRenderDimensions { return this._renderer.value!.dimensions; }
+ * `_renderer` 是 MutableDisposable（src/common/Lifecycle.ts:50-84），
+ * 其 value getter 在 _isDisposed=true（即 xterm.dispose() 链触发后，
+ * RenderService 所在的 _renderer 被 dispose）时永远返回 undefined；
+ * 此外 addon 切换瞬间（WebGL/Canvas activate 失败、setRenderer 未调用）也会
+ * 出现 _renderer.value 为 undefined。此时读 .dimensions 即抛错。
+ *
+ * xterm 内部有 7 处直接同步读 _renderService.dimensions（Viewport 构造期、
+ * CompositionHelper、MouseService、SelectionService、AccessibilityManager、
+ * BufferDecorationRenderer、Terminal._syncTextArea/_reportWindowsOptions），
+ * 外部无法逐个守护——唯一彻底的解法是在 RenderService.prototype 上用
+ * Object.defineProperty 替换 getter，当 _renderer.value 为 undefined 时
+ * 返回全 0 安全默认值而非抛错。
+ *
+ * 该补丁幂等：仅 patch 一次，全局生效。对所有 xterm 实例共享的 prototype
+ * 做替换，故每个 xterm 实例 open() 之后调用一次即可（多次调用安全）。
+ */
+let dimensionsPatchApplied = false
+export function patchRenderServiceDimensions(xterm: Terminal): void {
+  if (dimensionsPatchApplied) return
+  const core = (xterm as any)['_core']
+  const renderService = core?.['_renderService']
+  // _renderService 是 prototype 上的实例，取其构造器原型做一次性 patch
+  const proto = renderService?.constructor?.prototype
+  if (!proto) return
+
+  try {
+    Object.defineProperty(proto, 'dimensions', {
+      configurable: true,
+      enumerable: true,
+      get(this: any): any {
+        // renderer 已就绪时走原生路径，返回真实 dimensions
+        const renderer = this?._renderer?.value
+        if (renderer) return renderer.dimensions
+        // renderer 未就绪（MutableDisposable 已 dispose 或 addon 切换瞬间）：
+        // 返回全 0 安全默认值，避免任何调用方拿到 undefined.dimensions
+        return DIMENSIONS_FALLBACK
+      },
+    })
+    dimensionsPatchApplied = true
+  } catch (e) {
+    console.warn('[xtermEnhancements] patch RenderService.dimensions getter 失败:', e)
+  }
+}
+
+/** dimensions getter 的全 0 安全兜底值（结构与 IRenderDimensions 一致） */
+const DIMENSIONS_FALLBACK = {
+  css: { canvas: { width: 0, height: 0 }, cell: { width: 0, height: 0 } },
+  device: {
+    canvas: { width: 0, height: 0 },
+    cell: { width: 0, height: 0 },
+    char: { width: 0, height: 0, left: 0, top: 0 },
+  },
 }
 
 /**
