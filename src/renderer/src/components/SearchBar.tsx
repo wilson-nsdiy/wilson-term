@@ -42,9 +42,12 @@ const SearchBar: React.FC = () => {
     return () => window.removeEventListener('terminal:searchResult', handler)
   }, [])
 
+  // 查找内容至少两个字符（避免单字符高频全缓冲区扫描）
+  const canSearch = searchText.length >= 2
+
   const doSearch = useCallback((direction: 'next' | 'prev' | 'init') => {
     const sid = useAppStore.getState().activeSessionId
-    if (!sid || !searchText) {
+    if (!sid || !canSearch) {
       setMatchCount(-1)
       setMatchIndex(-1)
       return
@@ -57,7 +60,7 @@ const SearchBar: React.FC = () => {
   // 搜索文本或选项变化时重新搜索（debounce，避免每次按键触发全缓冲区扫描）
   const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
-    if (!searchVisible || !searchText) {
+    if (!searchVisible || !canSearch) {
       if (initTimerRef.current) clearTimeout(initTimerRef.current)
       setMatchCount(-1)
       setMatchIndex(-1)
@@ -115,7 +118,7 @@ const SearchBar: React.FC = () => {
       <button
         title="上一个 (Shift+Enter)"
         onClick={() => doSearch('prev')}
-        disabled={!searchText}
+        disabled={!canSearch}
         className="text-gray-400 hover:text-gray-200 disabled:text-gray-600 disabled:cursor-not-allowed"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 15l-6-6-6 6"/></svg>
@@ -123,7 +126,7 @@ const SearchBar: React.FC = () => {
       <button
         title="下一个 (Enter)"
         onClick={() => doSearch('next')}
-        disabled={!searchText}
+        disabled={!canSearch}
         className="text-gray-400 hover:text-gray-200 disabled:text-gray-600 disabled:cursor-not-allowed"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>

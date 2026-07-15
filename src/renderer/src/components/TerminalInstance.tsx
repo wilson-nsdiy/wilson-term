@@ -775,7 +775,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
               marker,
               x: m.col,
               width: m.length,
-              backgroundColor: isActive ? '#f9e2af55' : '#585b70aa',
+              backgroundColor: isActive ? '#cba6f7aa' : '#585b70aa',
               layer: 'top',
             })
             if (decoration) {
