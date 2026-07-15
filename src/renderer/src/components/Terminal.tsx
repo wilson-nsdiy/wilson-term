@@ -9,7 +9,7 @@ import CommandInput from './CommandInput'
 import ButtonBar from './ButtonBar'
 import SearchBar from './SearchBar'
 import { buildFontFamily } from '../utils/font'
-import { safeFit } from '../utils/xtermEnhancements'
+import { patchRenderServiceDimensions, safeFit } from '../utils/xtermEnhancements'
 import '@xterm/xterm/css/xterm.css'
 
 /** 欢迎终端：无活跃会话时显示欢迎信息 */
@@ -72,6 +72,8 @@ const WelcomeTerminal: React.FC = () => {
     xterm.loadAddon(fitAddon)
 
     xterm.open(terminalRef.current)
+    // patch RenderService.dimensions getter 根治 dimensions 崩溃（详见 xtermEnhancements 说明）
+    patchRenderServiceDimensions(xterm)
     safeFit(xterm, fitAddon)
 
     if (settings.backgroundImage) {

@@ -10,7 +10,7 @@ import { resolveLogConfig } from '../utils/logConfig'
 import { resolveSettings } from '../utils/settingsResolver'
 import { buildFontFamily } from '../utils/font'
 import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseModeEnabled } from '../utils/pasteFilter'
-import { FlowControl, PinnedScroll, RendererManager, safeFit } from '../utils/xtermEnhancements'
+import { FlowControl, PinnedScroll, RendererManager, patchRenderServiceDimensions, safeFit } from '../utils/xtermEnhancements'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
 import TerminalStatusBar from './TerminalStatusBar'
@@ -238,6 +238,10 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     xterm.unicode.activeVersion = '11'
 
     xterm.open(terminalRef.current)
+    // 在 open() 之后立即 patch RenderService.dimensions getter，根治
+    // "Cannot read properties of undefined (reading 'dimensions')" 崩溃。
+    // 必须在 open() 之后调用——_renderService 在 open() 内部才创建。
+    patchRenderServiceDimensions(xterm)
     safeFit(xterm, fitAddon)
 
     // 初始化写入背压控制器，并交给 PinnedScroll 持有
