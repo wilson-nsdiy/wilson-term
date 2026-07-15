@@ -3,9 +3,9 @@ import type { Terminal } from '@xterm/xterm'
 export interface SearchMatch {
   /** 起始 buffer row（逻辑行起始 row） */
   row: number
-  /** 起始列（buffer 列坐标） */
+  /** 起始列（buffer 列坐标，即 registerDecoration 的 x） */
   col: number
-  /** 匹配长度（字符数；用于 decoration 宽度） */
+  /** 匹配长度（buffer cell 数，即 registerDecoration 的 width） */
   length: number
 }
 
@@ -25,6 +25,95 @@ export interface SearchMatchInfo {
 }
 
 /**
+ * buffer line 的最小可用接口，便于单测时 stub。
+ */
+interface StringOffsetLine {
+  getCell(x: number): { getWidth(): number } | undefined
+  length: number
+}
+
+/**
+ * 把"段内字符串偏移"转换为该段的 buffer 列坐标。
+ *
+ * `translateToString(true)` 的输出有一个重要性质：它为每个非零宽度 cell 产出
+ * 一个字符（宽字符 cell 只产出 1 个字符，宽度为 0 的跟随 cell 不产出字符），
+ * 因此字符串索引等于"跳过所有宽度为 0 的跟随 cell 后的非零宽度 cell 计数"。
+ *
+ * 反过来求 buffer 列：从列 0 开始遍历 cell，每遇到一个非零宽度的 cell 就把
+ * 字符串指针前进一步；当字符串指针到达目标偏移时，当前累计的列就是 buffer 列。
+ * 宽度为 2 的 cell 在 buffer 中占两列，但字符串中只占 1 个字符，所以需要按
+ * cell 宽度累计列数；宽度为 0 的跟随 cell 占一列、不消耗字符串字符。
+ *
+ * @param line   该段的 buffer line 对象
+ * @param strIdx 该段 translateToString 输出中的字符偏移
+ * @param maxCells 该段的 buffer cell 上限（通常为 line.length 或终端列宽）
+ * @returns 对应的 buffer 列坐标
+ */
+function stringIndexToBufferCol(
+  line: StringOffsetLine | undefined,
+  strIdx: number,
+  maxCells: number
+): number {
+  if (!line) return strIdx
+  let col = 0
+  let consumed = 0
+  for (let x = 0; x < maxCells && consumed < strIdx; x++) {
+    const cell = line.getCell(x)
+    if (!cell) break
+    const w = cell.getWidth()
+    if (w === 0) {
+      // 跟随 cell：占一列，不消耗字符串字符
+      col++
+    } else {
+      // 非零宽度 cell：消耗一个字符串字符，占用 w 列
+      consumed++
+      col += w
+    }
+  }
+  return col
+}
+
+/**
+ * 把"段内字符串长度"换算为 buffer cell 数（registerDecoration 的 width）。
+ *
+ * 从起始 buffer 列开始遍历 cell，每遇到一个非零宽度 cell 就消耗一个字符串
+ * 字符，并把该 cell 的宽度累加到结果；宽度为 0 的跟随 cell 已经包含在前一个
+ * 宽字符的 w 列内，不额外计数。
+ *
+ * 前提：startCol 必须指向非跟随 cell（即由 stringIndexToBufferCol 计算得到）。
+ * 若 startCol 落在跟随 cell 上，循环会跳过它而不消耗任何字符串字符，导致
+ * 返回值偏小。当前调用链保证这一前提。
+ *
+ * @param line  该段的 buffer line 对象
+ * @param startCol 起始 buffer 列（对应字符串偏移起点）
+ * @param strLen 要覆盖的字符串字符数
+ * @param maxCells buffer cell 上限
+ * @returns buffer cell 数
+ */
+function stringLengthToBufferCells(
+  line: StringOffsetLine | undefined,
+  startCol: number,
+  strLen: number,
+  maxCells: number
+): number {
+  if (!line) return strLen
+  let cells = 0
+  let consumed = 0
+  for (let x = startCol; x < maxCells && consumed < strLen; x++) {
+    const cell = line.getCell(x)
+    if (!cell) break
+    const w = cell.getWidth()
+    if (w === 0) {
+      // 宽字符的跟随 cell，已包含在前一个 +=w 中，这里直接跳过
+      continue
+    }
+    consumed++
+    cells += w
+  }
+  return cells
+}
+
+/**
  * 自行计算搜索匹配总数和当前选中匹配的索引。
  *
  * xterm search addon 的 onDidChangeResults 在以下场景不可靠：
@@ -39,6 +128,11 @@ export interface SearchMatchInfo {
  * wrap line 处理：xterm 将一个逻辑行（超过终端宽度自动换行）存储为多个
  * buffer row，后续行 isWrapped=true。translateToString(true) 只返回单行文本，
  * 因此需要把同一逻辑行的所有 wrap 续行拼接成完整 haystack 再搜索。
+ *
+ * 坐标换算：registerDecoration 的 x/width 以 buffer cell 为单位，而本函数
+ * 在 translateToString 输出的字符串上做匹配。宽字符（CJK/emoji）在 buffer
+ * 中占 2 列、在字符串中只占 1 个字符，所以必须通过 stringIndexToBufferCol
+ * 把字符串偏移换算回 buffer 列，否则高亮位置会与实际匹配错位。
  */
 export function computeSearchMatchInfo(
   xterm: Terminal,
@@ -118,22 +212,30 @@ export function computeSearchMatchInfo(
         const segEnd = seg + 1 < segOffsets.length ? segOffsets[seg + 1] : haystack.length
         const segRow = segRows[seg]
         const lineObj = buffer.getLine(segRow)
-        const segCols = lineObj ? lineObj.length : xterm.cols
-        const localCol = curIdx - segOffsets[seg]
-        // 当前段内可容纳的字符数：不超过段尾、不超过终端列宽
-        const avail = Math.min(segEnd - curIdx, segCols - localCol)
-        const take = Math.min(remaining, Math.max(avail, 1))
-        matches.push({ row: segRow, col: localCol, length: take })
+        // localStrIdx：在该段 translateToString 输出中的字符偏移
+        const localStrIdx = curIdx - segOffsets[seg]
+        // 段内可用字符串长度：不超过段尾
+        const segAvail = segEnd - curIdx
+        // 取本轮段内消费的字符串字符数
+        const take = Math.min(remaining, Math.max(segAvail, 1))
+        // 把字符串长度换算为 buffer cell 数：匹配长度范围内每个非零宽度 cell 占 w 列
+        const maxCells = lineObj ? lineObj.length : xterm.cols
+        const bufferCol = stringIndexToBufferCol(lineObj, localStrIdx, maxCells)
+        const cellLen = stringLengthToBufferCells(lineObj, bufferCol, take, maxCells)
+        matches.push({ row: segRow, col: bufferCol, length: cellLen })
         remaining -= take
         curIdx += take
         seg++
         // 跨段时下一段从偏移 0 开始
         while (seg < segRows.length && remaining > 0) {
           const nextLineObj = buffer.getLine(segRows[seg])
-          const nextSegCols = nextLineObj ? nextLineObj.length : xterm.cols
-          const nextTake = Math.min(remaining, nextSegCols)
-          matches.push({ row: segRows[seg], col: 0, length: nextTake })
+          const nextMaxCells = nextLineObj ? nextLineObj.length : xterm.cols
+          const nextTake = Math.min(remaining, nextMaxCells)
+          const nextBufferCol = stringIndexToBufferCol(nextLineObj, 0, nextMaxCells)
+          const nextCellLen = stringLengthToBufferCells(nextLineObj, nextBufferCol, nextTake, nextMaxCells)
+          matches.push({ row: segRows[seg], col: nextBufferCol, length: nextCellLen })
           remaining -= nextTake
+          curIdx += nextTake
           seg++
         }
       }
