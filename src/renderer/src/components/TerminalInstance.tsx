@@ -10,6 +10,7 @@ import { resolveLogConfig } from '../utils/logConfig'
 import { resolveSettings } from '../utils/settingsResolver'
 import { buildFontFamily } from '../utils/font'
 import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseModeEnabled } from '../utils/pasteFilter'
+import { computeSearchMatchInfo } from '../utils/searchMatch'
 import { FlowControl, PinnedScroll, RendererManager, patchRenderServiceDimensions, safeFit } from '../utils/xtermEnhancements'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
@@ -294,14 +295,6 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       return true
     })
 
-    // 监听搜索结果变化，通知搜索栏
-    const searchResultDisposable = searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
-      const resultEvent = new CustomEvent('terminal:searchResult', {
-        detail: { resultIndex, resultCount }
-      })
-      window.dispatchEvent(resultEvent)
-    })
-
     // 监听选中状态变化
     const selectionChangeDisposable = xterm.onSelectionChange(() => {
       setHasSelection(xterm.getSelection().length > 0)
@@ -418,7 +411,6 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       compositionMo?.disconnect()
       terminalRef.current?.removeEventListener('contextmenu', handleContextMenu)
       selectionChangeDisposable.dispose()
-      searchResultDisposable.dispose()
       unbindData()
 
       // 清理增强器（按依赖顺序：先 PinnedScroll 再 RendererManager，最后 xterm）
@@ -732,6 +724,18 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
         searchAddon.findNext(searchText, options)
       } else if (action === 'prev') {
         searchAddon.findPrevious(searchText, options)
+      }
+
+      // 自行计算匹配总数和当前位置，不依赖 xterm search addon 的 onDidChangeResults
+      // （后者在 wrap line 场景下 resultCount/resultIndex 不可靠）
+      const xterm = xtermRef.current
+      if (xterm) {
+        const info = computeSearchMatchInfo(xterm, searchText, matchCase, matchRegex)
+        if (info) {
+          window.dispatchEvent(new CustomEvent('terminal:searchResult', {
+            detail: { sessionId, resultIndex: info.resultIndex, resultCount: info.resultCount }
+          }))
+        }
       }
     }
 

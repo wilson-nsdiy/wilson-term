@@ -31,7 +31,10 @@ const SearchBar: React.FC = () => {
   // 监听搜索结果
   useEffect(() => {
     const handler = (e: Event) => {
-      const { resultIndex, resultCount } = (e as CustomEvent).detail
+      const { sessionId: resultSid, resultIndex, resultCount } = (e as CustomEvent).detail
+      const activeSid = useAppStore.getState().activeSessionId
+      // 只接受当前活动会话的搜索结果，避免其他标签页事件污染
+      if (resultSid !== activeSid) return
       setMatchIndex(resultIndex)
       setMatchCount(resultCount)
     }
@@ -51,14 +54,20 @@ const SearchBar: React.FC = () => {
     }))
   }, [searchText, matchCase, matchRegex])
 
-  // 搜索文本或选项变化时重新搜索
+  // 搜索文本或选项变化时重新搜索（debounce，避免每次按键触发全缓冲区扫描）
+  const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!searchVisible || !searchText) {
+      if (initTimerRef.current) clearTimeout(initTimerRef.current)
       setMatchCount(-1)
       setMatchIndex(-1)
       return
     }
-    doSearch('init')
+    if (initTimerRef.current) clearTimeout(initTimerRef.current)
+    initTimerRef.current = setTimeout(() => doSearch('init'), 200)
+    return () => {
+      if (initTimerRef.current) clearTimeout(initTimerRef.current)
+    }
   }, [searchText, matchCase, matchRegex, searchVisible, doSearch])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -72,17 +81,11 @@ const SearchBar: React.FC = () => {
 
   if (!searchVisible) return null
 
-  // xterm search addon 约定：
-  //  - resultIndex = -1 表示超过高亮上限（highlightLimit，默认 1000）或当前无选中匹配
-  //  - resultCount 受 highlightLimit 限制，超过上限时停留在上限值，并非真实总数
+  // 自行计算匹配总数与当前位置，不依赖 xterm search addon 的 onDidChangeResults
+  // （后者在 wrap line 场景下 resultCount/resultIndex 不可靠）
   let matchInfo = ''
   if (matchCount > 0) {
-    if (matchIndex >= 0) {
-      matchInfo = `${matchIndex + 1}/${matchCount}`
-    } else {
-      // 超过高亮上限，无法定位当前位置，也无法给出准确总数
-      matchInfo = `?/>=${matchCount}`
-    }
+    matchInfo = matchIndex >= 0 ? `${matchIndex + 1}/${matchCount}` : `?/${matchCount}`
   } else if (matchCount === 0) {
     matchInfo = '0/0'
   }
