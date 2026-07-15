@@ -129,6 +129,9 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     // 监听 xterm 用户输入，发送到连接
     const inputDisposable = xterm.onData((data) => {
+      // 用户输入意味着结束回看、准备查看新输出，立即跟随底部，
+      // 后续远端回显与命令输出即可自动滚到底部。
+      pinnedScrollRef.current?.onUserInput()
       rendererPluginHost.feedInput(sid, data)
       window.api.connection.write(sid, data)
     })
