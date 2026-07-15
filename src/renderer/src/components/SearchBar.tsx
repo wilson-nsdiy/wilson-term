@@ -72,7 +72,20 @@ const SearchBar: React.FC = () => {
 
   if (!searchVisible) return null
 
-  const matchInfo = matchCount >= 0 ? `${matchIndex + 1}/${matchCount}` : ''
+  // xterm search addon 约定：
+  //  - resultIndex = -1 表示超过高亮上限（highlightLimit，默认 1000）或当前无选中匹配
+  //  - resultCount 受 highlightLimit 限制，超过上限时停留在上限值，并非真实总数
+  let matchInfo = ''
+  if (matchCount > 0) {
+    if (matchIndex >= 0) {
+      matchInfo = `${matchIndex + 1}/${matchCount}`
+    } else {
+      // 超过高亮上限，无法定位当前位置，也无法给出准确总数
+      matchInfo = `?/>=${matchCount}`
+    }
+  } else if (matchCount === 0) {
+    matchInfo = '0/0'
+  }
 
   return (
     <div className="absolute top-1 right-2 z-20 flex items-center gap-2 px-3 py-1.5 bg-[#1e1e2e] border border-[#4a4a5a] rounded-lg shadow-xl text-sm">
