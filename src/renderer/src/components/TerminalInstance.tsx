@@ -750,12 +750,22 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       if (xterm) {
         const info = computeSearchMatchInfo(xterm, searchText, matchCase, matchRegex)
         if (info) {
-          // 为每个匹配创建 matchBackground 高亮 decoration
-          // 当前选中项用 activeMatchBackground，其余用 matchBackground
-          const activeIndex = info.resultIndex
+          // 为每个匹配分段创建 matchBackground 高亮 decoration
+          // 当前选中的逻辑匹配对应的所有分段用 activeMatchBackground
+          const activeLogical = info.resultIndex
+          // activeLogical < 0 表示无选中匹配，此时 activeSegStart > activeSegEnd，
+          // isActive 对所有分段为 false
+          const activeSegStart = activeLogical >= 0 && activeLogical < info.logicalStarts.length
+            ? info.logicalStarts[activeLogical]
+            : Number.POSITIVE_INFINITY
+          const activeSegEnd = activeLogical >= 0
+            ? (activeLogical + 1 < info.logicalStarts.length
+                ? info.logicalStarts[activeLogical + 1]
+                : info.matches.length)
+            : -1
           for (let i = 0; i < info.matches.length; i++) {
             const m = info.matches[i]
-            const isActive = i === activeIndex
+            const isActive = i >= activeSegStart && i < activeSegEnd
             // registerMarker(cursorYOffset) 中 cursorYOffset = -baseY - cursorY + row
             // 与 SearchAddon._selectResult 的算法一致
             const cursorYOffset = -xterm.buffer.active.baseY - xterm.buffer.active.cursorY + m.row

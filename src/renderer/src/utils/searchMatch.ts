@@ -14,8 +14,14 @@ export interface SearchMatchInfo {
   resultIndex: number
   /** 匹配总数 */
   resultCount: number
-  /** 所有匹配列表（按缓冲区顺序） */
+  /** 所有匹配分段列表（按缓冲区顺序），用于驱动 registerDecoration */
   matches: SearchMatch[]
+  /**
+   * 每个逻辑匹配的起点分段在 matches 中的索引。
+   * logicalStarts[k] .. (logicalStarts[k+1] ?? matches.length) - 1
+   * 是第 k 个逻辑匹配对应的所有分段。
+   */
+  logicalStarts: number[]
 }
 
 /**
@@ -62,7 +68,7 @@ export function computeSearchMatchInfo(
       pattern = new RegExp(searchText, flags)
     } catch {
       // 无效正则，当作无匹配
-      return { resultIndex: -1, resultCount: 0 }
+      return { resultIndex: -1, resultCount: 0, matches: [], logicalStarts: [] }
     }
   }
 
@@ -193,5 +199,5 @@ export function computeSearchMatchInfo(
     }
   }
 
-  return { resultIndex, resultCount, matches }
+  return { resultIndex, resultCount, matches, logicalStarts }
 }
