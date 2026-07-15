@@ -716,9 +716,10 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       if (matchCase) options.caseSensitive = true
       if (matchRegex) options.regex = true
       if (action === 'init') options.incremental = true
+      // 使用半透明高亮，避免背景色过亮盖住字符
       options.decorations = {
-        matchBackground: '#585b70',
-        activeMatchBackground: '#f9e2af',
+        matchBackground: '#585b70aa',
+        activeMatchBackground: '#f9e2af55',
         matchOverviewRuler: '#585b70',
         activeMatchColorOverviewRuler: '#f9e2af'
       }
