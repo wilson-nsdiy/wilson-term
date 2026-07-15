@@ -10,7 +10,7 @@ import { resolveLogConfig } from '../utils/logConfig'
 import { resolveSettings } from '../utils/settingsResolver'
 import { buildFontFamily } from '../utils/font'
 import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseModeEnabled } from '../utils/pasteFilter'
-import { FlowControl, PinnedScroll, RendererManager } from '../utils/xtermEnhancements'
+import { FlowControl, PinnedScroll, RendererManager, safeFit } from '../utils/xtermEnhancements'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
 import TerminalStatusBar from './TerminalStatusBar'
@@ -238,7 +238,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     xterm.unicode.activeVersion = '11'
 
     xterm.open(terminalRef.current)
-    fitAddon.fit()
+    safeFit(xterm, fitAddon)
 
     // 初始化写入背压控制器，并交给 PinnedScroll 持有
     const flowControl = new FlowControl(xterm)
@@ -355,7 +355,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     const runResize = () => {
       resizePending = false
       lastResize = Date.now()
-      const fit = () => fitAddon.fit()
+      const fit = () => safeFit(xtermRef.current, fitAddon)
       if (pinnedScrollRef.current) {
         pinnedScrollRef.current.withScrollPreservation(fit, true)
       } else {
@@ -399,7 +399,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     const handleCompositionEnd = () => {
       // IME 组合结束后 fit，保持滚动位置与其他 fit 路径一致
-      const fit = () => fitAddon.fit()
+      const fit = () => safeFit(xtermRef.current, fitAddon)
       if (pinnedScrollRef.current) {
         pinnedScrollRef.current.withScrollPreservation(fit, true)
       } else {
@@ -568,7 +568,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
         // 标签页重新可见时恢复可能丢失的 GPU 渲染器上下文
         rendererManagerRef.current?.reactivate()
         // fit 并保持滚动位置（pinnedScroll 不可用时仍保证 fit 执行）
-        const fit = () => fitAddonRef.current?.fit()
+        const fit = () => safeFit(xtermRef.current, fitAddonRef.current)
         if (pinnedScrollRef.current) {
           pinnedScrollRef.current.withScrollPreservation(fit, true)
         } else {
@@ -597,7 +597,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       xterm.options.theme = { ...xterm.options.theme, background: r.backgroundImage ? '#00000000' : r.background, foreground: r.foreground }
     }
     // 字体变化会改变单元尺寸，fit 时保持滚动位置（pinnedScroll 不可用时仍保证 fit 执行）
-    const fit = () => fitAddonRef.current?.fit()
+    const fit = () => safeFit(xtermRef.current, fitAddonRef.current)
     if (pinnedScrollRef.current) {
       pinnedScrollRef.current.withScrollPreservation(fit, true)
     } else {
