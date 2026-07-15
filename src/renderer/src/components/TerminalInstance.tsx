@@ -30,6 +30,23 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
+  /**
+   * 自管理的搜索匹配高亮 decoration 销毁函数集合。
+   *
+   * 不依赖 xterm SearchAddon 的 _highlightAllMatches：该方法内部去重循环
+   * `while (result && (prevResult?.row !== result.row || prevResult?.col !== result.col))`
+   * 在匹配项位于行尾或跨 wrap 边界时会提前退出，导致只高亮第一个匹配。
+   * 这里根据 computeSearchMatchInfo 返回的完整匹配列表，自行通过
+   * registerDecoration 为每个匹配创建 matchBackground 高亮。
+   */
+  const searchHighlightDisposablesRef = useRef<Array<() => void>>([])
+  /** 清理并重置自管理的搜索高亮 decoration（每项调用包 try/catch，避免单次失败跳过其余） */
+  const disposeSearchHighlights = () => {
+    for (const d of searchHighlightDisposablesRef.current) {
+      try { d() } catch { /* 已随 xterm.dispose() 销毁 */ }
+    }
+    searchHighlightDisposablesRef.current = []
+  }
   /** 自定义跟随底部滚动状态管理器 */
   const pinnedScrollRef = useRef<PinnedScroll | null>(null)
   /** 渲染器管理器（WebGL/Canvas 加速 + GPU 上下文恢复） */
@@ -437,6 +454,8 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       xtermRef.current = null
       fitAddonRef.current = null
       searchAddonRef.current = null
+      // 清理自管理的搜索高亮 decoration
+      disposeSearchHighlights()
     }
   }, []) // 仅在挂载时创建 xterm 实例
 
@@ -705,33 +724,63 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       if (action === 'clear') {
         searchAddon.clearDecorations()
         searchAddon.clearActiveDecoration()
+        disposeSearchHighlights()
         return
       }
 
-      const options: { regex?: boolean; wholeWord?: boolean; caseSensitive?: boolean; incremental?: boolean; decorations?: { matchBackground: string; activeMatchBackground: string; matchOverviewRuler: string; activeMatchColorOverviewRuler: string } } = {}
+      // 先清理上一轮自管理的高亮 decoration
+      disposeSearchHighlights()
+
+      const options: { regex?: boolean; wholeWord?: boolean; caseSensitive?: boolean; incremental?: boolean } = {}
       if (matchCase) options.caseSensitive = true
       if (matchRegex) options.regex = true
       if (action === 'init') options.incremental = true
-      // 使用半透明高亮，避免背景色过亮盖住字符
-      options.decorations = {
-        matchBackground: '#585b70aa',
-        activeMatchBackground: '#f9e2af55',
-        matchOverviewRuler: '#585b70',
-        activeMatchColorOverviewRuler: '#f9e2af'
-      }
 
+      // 不传 decorations 给 SearchAddon：addon 的 _highlightAllMatches 在匹配项
+      // 位于行尾或跨 wrap 边界时会提前退出循环，导致只高亮第一个匹配。
+      // 这里只让 addon 负责"选中并滚动到当前匹配"，matchBackground 高亮
+      // 由下面的自管理 decoration 完成。
       if (action === 'init' || action === 'next') {
         searchAddon.findNext(searchText, options)
       } else if (action === 'prev') {
         searchAddon.findPrevious(searchText, options)
       }
 
-      // 自行计算匹配总数和当前位置，不依赖 xterm search addon 的 onDidChangeResults
-      // （后者在 wrap line 场景下 resultCount/resultIndex 不可靠）
       const xterm = xtermRef.current
       if (xterm) {
         const info = computeSearchMatchInfo(xterm, searchText, matchCase, matchRegex)
         if (info) {
+          // 为每个匹配创建 matchBackground 高亮 decoration
+          // 当前选中项用 activeMatchBackground，其余用 matchBackground
+          const activeIndex = info.resultIndex
+          for (let i = 0; i < info.matches.length; i++) {
+            const m = info.matches[i]
+            const isActive = i === activeIndex
+            // registerMarker(cursorYOffset) 中 cursorYOffset = -baseY - cursorY + row
+            // 与 SearchAddon._selectResult 的算法一致
+            const cursorYOffset = -xterm.buffer.active.baseY - xterm.buffer.active.cursorY + m.row
+            const marker = xterm.registerMarker(cursorYOffset)
+            if (!marker) continue
+            const decoration = xterm.registerDecoration({
+              marker,
+              x: m.col,
+              width: m.length,
+              backgroundColor: isActive ? '#f9e2af55' : '#585b70aa',
+              layer: 'top',
+            })
+            if (decoration) {
+              const disposables: Array<() => void> = []
+              disposables.push(() => marker.dispose())
+              disposables.push(() => decoration.dispose())
+              searchHighlightDisposablesRef.current.push(() => {
+                for (const d of disposables) {
+                  try { d() } catch { /* 已销毁 */ }
+                }
+              })
+            } else {
+              marker.dispose()
+            }
+          }
           window.dispatchEvent(new CustomEvent('terminal:searchResult', {
             detail: { sessionId, resultIndex: info.resultIndex, resultCount: info.resultCount }
           }))
