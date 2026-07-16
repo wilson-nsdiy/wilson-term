@@ -7,7 +7,7 @@ import { registerSFTPHandlers, setActiveConnectionsGetter } from './sftp'
 import { loadSavedSessionsFromDisk, saveSavedSessionsToDisk, loadCommandButtonGroupsFromDisk, saveCommandButtonGroupsToDisk, loadAppSettingsFromDisk, saveAppSettingsToDisk, loadViewStateFromDisk, saveViewStateToDisk, loadScheduledTasksFromDisk, saveScheduledTasksToDisk, loadProfilesFromDisk, saveProfilesToDisk, loadSavedSessionGroupsFromDisk, saveSavedSessionGroupsToDisk } from './storage'
 import { logManager } from './logger'
 import { appLogger } from './app-logger'
-import { checkForUpdates, getCurrentVersion, downloadUpdate, quitAndInstall, getStatus, getIgnoredVersions, saveIgnoredVersions } from './updater'
+import { checkForUpdates, getCurrentVersion, downloadUpdate, quitAndInstall, getStatus, getIgnoredVersions, saveIgnoredVersions, cancelDownloadUpdate } from './updater'
 import { getKeyboardLockState } from './keyboard'
 import { getComputerDomain } from './domain'
 import { mainPluginHost } from './plugin-host'
@@ -180,6 +180,11 @@ export function registerIpcHandlers(): void {
   // 下载更新
   ipcMain.handle('app:download-update', () => {
     return downloadUpdate()
+  })
+
+  // 取消下载更新
+  ipcMain.handle('app:cancel-update', () => {
+    cancelDownloadUpdate()
   })
 
   // 安装更新
