@@ -490,12 +490,11 @@ const GlobalOptionsDialog: React.FC<GlobalOptionsDialogProps> = ({ open, onClose
                     <div>
                       <label className={labelClass}>渲染器</label>
                       <p className="mt-1.5 mb-2.5 text-xs text-gray-500">
-                        WebGL 加速渲染性能最佳，适用于高频输出场景；Canvas 为兼容后备；DOM 兼容性最高但性能较低。更改需重新打开终端生效。
+                        WebGL 加速渲染性能最佳，适用于高频输出场景；DOM 兼容性最高但性能较低。更改需重新打开终端生效。
                       </p>
                       <div className="flex gap-2">
                         {([
                           { value: 'webgl', label: 'WebGL（推荐）' },
-                          { value: 'canvas', label: 'Canvas' },
                           { value: 'dom', label: 'DOM' }
                         ] as const).map((opt) => (
                           <button

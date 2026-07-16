@@ -6,7 +6,7 @@
  * 2. PinnedScroll —— 自定义"跟随底部"滚动状态，解决 xterm.js 在用户回看历史时
  *    被新输出拉回底部的体验痛点（xterm onScroll 只在内容驱动滚动时触发，无法
  *    反映用户滚轮/键盘滚动，见 xterm.js #3864/#3201）。
- * 3. WebGL/Canvas 渲染器加载与 GPU 上下文丢失恢复。
+ * 3. WebGL 渲染器加载与 GPU 上下文丢失恢复（xterm 6.x 已废弃 Canvas addon，WebGL 不可用时回退 DOM）。
  *
  * 这三项都围绕 xterm 实例运作，封装在此以便 TerminalInstance 保持简洁。
  *
@@ -28,10 +28,9 @@ import type { Terminal } from '@xterm/xterm'
 // 回退到 DOM。静态 import 由 Vite 预打包转换（addon 是 CJS，Vite 会处理），
 // 让渲染器真正可用。代价是 addon 体积进入 bundle，但它们本就是项目依赖。
 import { WebglAddon } from '@xterm/addon-webgl'
-import { CanvasAddon } from '@xterm/addon-canvas'
 
 /** 在本增强模块测试过的 xterm 版本 */
-const TESTED_XTERM_VERSIONS = ['5.5.0']
+const TESTED_XTERM_VERSIONS = ['6.1.0-beta.288']
 
 /**
  * 安全地执行 fitAddon.fit()。
@@ -637,37 +636,36 @@ export class PinnedScroll {
 }
 
 /** 渲染器类型 */
-export type RendererType = 'webgl' | 'canvas' | 'dom'
+export type RendererType = 'webgl' | 'dom'
 
 /** GPU 上下文丢失后最多重建 WebGL 渲染器的次数，超限后回退到 DOM 渲染器 */
 const MAX_WEBGL_RECOVERY_ATTEMPTS = 3
 
 /** 渲染器管理器统计接口 */
 export interface RendererStats {
-  activeRenderer: 'webgl' | 'canvas' | 'dom' | 'none'
+  activeRenderer: 'webgl' | 'dom' | 'none'
   contextLossEvents: number
   recoveryAttempts: number
   reactivations: number
 }
 
 /**
- * 渲染器管理器：优先 WebGL，失败回退 Canvas，再回退 DOM；带 GPU 上下文丢失恢复。
+ * 渲染器管理器：优先 WebGL，失败回退 DOM；带 GPU 上下文丢失恢复。
  *
  * WebGL context loss 在驱动重置、应用切到后台、活跃 WebGL 上下文过多时会发生。
  * 恢复需要可见且聚焦的 canvas，因此切到后台时延迟到重新可见/聚焦时重试。
  */
 export class RendererManager {
   private webglAddon: any = null
-  private canvasAddon: any = null
   private xtermCore: any
   private pendingRecovery = false
   private recoveryAttempts = 0
-  /** WebGL 加载失败或恢复超限后置 true，后续恢复直接走 Canvas，避免反复重建 */
+  /** WebGL 加载失败或恢复超限后置 true，后续恢复直接走 DOM，避免反复重建 */
   private webglUnavailable = false
   private focusHandler: (() => void) | null = null
   private disposed = false
   private stats = {
-    activeRenderer: 'none' as 'webgl' | 'canvas' | 'dom' | 'none',
+    activeRenderer: 'none' as 'webgl' | 'dom' | 'none',
     contextLossEvents: 0,
     recoveryAttempts: 0,
     reactivations: 0
@@ -692,12 +690,11 @@ export class RendererManager {
     if (this.preferred === 'webgl') {
       return this.attachWebGL()
     }
-    if (this.preferred === 'canvas') {
-      this.attachCanvas()
-      return false
-    }
+    // preferred === 'dom'：走 xterm 内置 DOM 渲染器。
+    // xterm 6.x 已废弃 Canvas addon（@xterm/addon-canvas 无 6.x 兼容版本），
+    // 与 VSCode 对齐：WebGL 不可用时回退到 DOM renderer。
     this.stats.activeRenderer = 'dom'
-    return false // DOM 渲染器，xterm 默认
+    return false
   }
 
   private attachWebGL(): boolean {
@@ -709,7 +706,7 @@ export class RendererManager {
       this.stats.activeRenderer = 'webgl'
       // 恢复成功，重置计数——recoveryAttempts 应统计"连续失败次数"，
       // 而非生命周期总恢复次数，否则多次偶发 context loss 后即使每次都恢复成功
-      // 也会被误判为达到上限并强制回退 Canvas。
+      // 也会被误判为达到上限并强制回退 DOM。
       this.recoveryAttempts = 0
       // 监听窗口 focus，在 GPU 上下文丢失后切回前台时尝试恢复。
       // 仅在首次加载时注册一次，避免 context loss 恢复时重复 attachWebGL 导致监听器泄漏。
@@ -719,42 +716,20 @@ export class RendererManager {
       }
       return true
     } catch (e) {
-      console.warn('[RendererManager] WebGL 渲染器加载失败，回退到 Canvas:', e)
+      console.warn('[RendererManager] WebGL 渲染器加载失败，回退到 DOM 渲染器:', e)
       this.webglUnavailable = true
       this.stats.activeRenderer = 'none'
-      // addon 构造失败时 _renderer.value 可能为 undefined，先兜底重建 DOM renderer，
-      // 再让 attachCanvas 尝试切到 Canvas（成功则覆盖 DOM renderer）。
+      // addon 构造失败时 _renderer.value 可能为 undefined，重建 DOM renderer 兜底。
       this.restoreDomRenderer()
-      this.attachCanvas()
       return false
     }
   }
 
-  private attachCanvas(): void {
-    try {
-      const addon = new CanvasAddon()
-      // Canvas 渲染器也会丢失 2D 上下文，注册恢复回调
-      if (addon.onContextLoss) {
-        addon.onContextLoss(() => this.onCanvasContextLoss())
-      }
-      this.xterm.loadAddon(addon)
-      this.canvasAddon = addon
-      this.stats.activeRenderer = 'canvas'
-    } catch (e) {
-      console.warn('[RendererManager] Canvas 渲染器加载失败，使用默认 DOM 渲染器:', e)
-      this.stats.activeRenderer = 'dom'
-      // 兜底：Canvas addon 构造失败时 _renderer.value 可能为 undefined（旧 renderer 已 dispose），
-      // 此时 _renderService.dimensions 会抛 "Cannot read properties of undefined (reading 'dimensions')"。
-      // 用 xterm 内部 API 重建 DOM renderer，保证 _renderer.value 始终有值。
-      this.restoreDomRenderer()
-    }
-  }
-
   /**
-   * 当 WebGL/Canvas addon 加载失败、_renderService._renderer.value 为 undefined 时，
+   * 当 WebGL addon 加载失败、_renderService._renderer.value 为 undefined 时，
    * 用 xterm 内部 API 重建 DOM renderer 兜底。
    *
-   * xterm 5.5.0 内部：_core._renderService.setRenderer(_core._createRenderer())，
+   * xterm 6.x 内部：_core._renderService.setRenderer(_core._createRenderer())，
    * _createRenderer 返回 DomRenderer 实例。这是 open() 内部 hasRenderer()||setRenderer()
    * 的同一调用路径，可安全复用。无公开类型声明故用 any。
    */
@@ -790,22 +765,6 @@ export class RendererManager {
     this.recoverRenderer()
   }
 
-  private onCanvasContextLoss(): void {
-    this.stats.contextLossEvents++
-    console.warn(`[RendererManager] Canvas 上下文丢失 (事件 #${this.stats.contextLossEvents})`)
-
-    try {
-      this.canvasAddon?.dispose()
-    } catch (e) {
-      console.warn('[RendererManager] 清理丢失的 Canvas addon 失败:', e)
-    }
-
-    this.canvasAddon = null
-    this.stats.activeRenderer = 'none'
-    this.pendingRecovery = true
-    this.recoverRenderer()
-  }
-
   private canRecover(): boolean {
     return this.host.offsetParent !== null && document.hasFocus()
   }
@@ -817,27 +776,27 @@ export class RendererManager {
     this.recoveryAttempts++
     this.stats.recoveryAttempts = this.recoveryAttempts
 
-    // preferred=webgl 且 WebGL 仍可用时尝试 WebGL 恢复；超限后标记不可用并回退 Canvas，
-    // 后续恢复直接走 Canvas 分支，避免每次 reactivate 都反复重建失败的 WebGL。
+    // preferred=webgl 且 WebGL 仍可用时尝试 WebGL 恢复；超限后标记不可用并回退 DOM，
+    // 后续恢复直接走 DOM 分支，避免每次 reactivate 都反复重建失败的 WebGL。
     if (this.preferred === 'webgl' && !this.webglUnavailable) {
       if (this.recoveryAttempts < MAX_WEBGL_RECOVERY_ATTEMPTS) {
         console.log(`[RendererManager] 尝试恢复 WebGL 渲染器 (${this.recoveryAttempts}/${MAX_WEBGL_RECOVERY_ATTEMPTS})`)
         this.attachWebGL()
       } else {
-        console.warn('[RendererManager] WebGL 恢复达到最大尝试次数，回退到 Canvas 渲染器')
+        console.warn('[RendererManager] WebGL 恢复达到最大尝试次数，回退到 DOM 渲染器')
         this.webglUnavailable = true
-        this.attachCanvas()
+        this.restoreDomRenderer()
       }
-    } else if (this.preferred === 'canvas' || this.webglUnavailable) {
-      console.log('[RendererManager] 尝试恢复 Canvas 渲染器')
-      this.attachCanvas()
+    } else if (this.webglUnavailable) {
+      console.log('[RendererManager] 尝试恢复 DOM 渲染器')
+      this.restoreDomRenderer()
     }
     this.redraw()
   }
 
   /**
    * 标签页重新可见时调用：若有待恢复的渲染器则恢复，否则仅重置重试计数。
-   * 应用/窗口级 GPU 重置可能不触发 xterm 的 contextlost 事件，因此 WebGL/Canvas 渲染器
+   * 应用/窗口级 GPU 重置可能不触发 xterm 的 contextlost 事件，因此 WebGL 渲染器
    * 丢失 addon 时也视为需要恢复。
    */
   reactivate(): void {
@@ -845,10 +804,9 @@ export class RendererManager {
 
     this.stats.reactivations++
 
-    // 期望渲染器：WebGL 不可用时以 Canvas 为准，避免 !webglAddon 恒真导致每次切回都重建
+    // 期望渲染器：WebGL 不可用时以 DOM 为准，避免 !webglAddon 恒真导致每次切回都重建
     const expectWebgl = this.preferred === 'webgl' && !this.webglUnavailable
-    const expectCanvas = this.preferred === 'canvas' || (this.preferred === 'webgl' && this.webglUnavailable)
-    const addonMissing = (expectWebgl && !this.webglAddon) || (expectCanvas && !this.canvasAddon)
+    const addonMissing = expectWebgl && !this.webglAddon
 
     if (this.pendingRecovery || addonMissing) {
       this.pendingRecovery = true
@@ -904,14 +862,7 @@ export class RendererManager {
       console.warn('[RendererManager] 清理 WebGL addon 失败:', e)
     }
 
-    try {
-      this.canvasAddon?.dispose?.()
-    } catch (e) {
-      console.warn('[RendererManager] 清理 Canvas addon 失败:', e)
-    }
-
     this.webglAddon = null
-    this.canvasAddon = null
     this.xtermCore = null
     this.stats.activeRenderer = 'none'
   }
