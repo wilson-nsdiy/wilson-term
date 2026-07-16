@@ -16,7 +16,7 @@ export interface ResolvedSettings {
   cursorStyle: 'block' | 'underline' | 'bar'
   cursorBlink: boolean
   scrollback: number
-  renderer: 'webgl' | 'canvas' | 'dom'
+  renderer: 'webgl' | 'dom'
   logConfig: LogConfig
   rightClickPaste: boolean
   trimPaste: boolean

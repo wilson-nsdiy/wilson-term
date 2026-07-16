@@ -405,6 +405,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadSavedSessions: async () => {
     try {
       const sessions = await window.api.storage.loadSavedSessions()
+      // 迁移：xterm 6.x 已废弃 Canvas addon，旧会话 overrides 中的 'canvas' 规整为 'dom'
+      for (const s of sessions) {
+        if ((s.overrides as { renderer?: string } | undefined)?.renderer === 'canvas') {
+          s.overrides!.renderer = 'dom'
+        }
+      }
       set({ savedSessions: sessions })
     } catch (err) {
       console.error('加载保存的会话失败:', err)
@@ -902,6 +908,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const saved = await window.api.storage.loadAppSettings()
       if (saved) {
+        // 迁移：xterm 6.x 已废弃 Canvas addon，旧持久化设置中的 'canvas' 规整为 'dom'
+        if ((saved as { renderer?: string }).renderer === 'canvas') {
+          saved.renderer = 'dom'
+        }
         set({ settings: { ...defaultSettings, ...saved } })
       }
     } catch (err) {
@@ -923,6 +933,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadProfiles: async () => {
     try {
       const profiles = await window.api.storage.loadProfiles()
+      // 迁移：xterm 6.x 已废弃 Canvas addon，旧 Profile overrides 中的 'canvas' 规整为 'dom'
+      for (const p of profiles) {
+        if ((p.overrides as { renderer?: string } | undefined)?.renderer === 'canvas') {
+          p.overrides!.renderer = 'dom'
+        }
+      }
       set({ profiles })
     } catch (err) {
       console.error('加载 Profile 失败:', err)
