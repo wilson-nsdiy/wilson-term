@@ -406,6 +406,7 @@ export interface AppAPI {
   getVersion: () => Promise<string>
   checkUpdate: (force?: boolean) => Promise<UpdateStatusSnapshot>
   downloadUpdate: () => Promise<void>
+  cancelDownloadUpdate: () => void
   installUpdate: () => void
   getUpdateStatus: () => Promise<UpdateStatusSnapshot>
   getIgnoredVersions: () => Promise<string[]>
