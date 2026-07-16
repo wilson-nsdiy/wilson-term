@@ -48,7 +48,13 @@ plugins/*/dist/
 plugins/*/node_modules/
 plugins/*/*.zip
 
-# AI
+# AI / IDE tool config
 .codegraph/
 .qoder/
 .mimocode/
+.codeartsdoer/
+.claude/
+
+# AtomCode config (machine-specific, includes hooks with absolute paths)
+.atomcode/
+.mcp.json

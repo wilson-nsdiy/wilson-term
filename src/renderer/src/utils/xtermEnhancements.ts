@@ -30,24 +30,107 @@ import type { Terminal } from '@xterm/xterm'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { CanvasAddon } from '@xterm/addon-canvas'
 
-/** xterm 内部 API 结构（无官方类型，仅用于运行时检测） */
-interface XTermInternals {
-  _core?: {
-    scrollToBottom?: () => void
-    _renderService?: {
-      clear?: () => void
-      handleResize?: (cols: number, rows: number) => void
-    }
+/** 在本增强模块测试过的 xterm 版本 */
+const TESTED_XTERM_VERSIONS = ['5.5.0']
+
+/**
+ * 安全地执行 fitAddon.fit()。
+ *
+ * xterm 5.5.0 的 get dimensions() 读取 this._renderService.dimensions，
+ * 当渲染器尚未附加（_renderService 为 undefined）、容器尺寸为 0
+ * （隐藏标签页尚未布局）、或终端已 dispose 时，fit 会抛出
+ * "Cannot read properties of undefined (reading 'dimensions')"。
+ *
+ * 本助手在调用前检查终端是否已 disposed、容器是否有真实尺寸、
+ * _renderService 是否就绪，并在异常时静默吞掉，避免单次 fit 失败
+ * 中断 UI 流程。
+ */
+export function safeFit(
+  xterm: Terminal | null | undefined,
+  fitAddon: { fit: () => void } | null | undefined
+): void {
+  if (!xterm || !fitAddon) return
+  // 终端已 dispose 时 element 通常为 undefined
+  // element 是 @xterm/xterm 公开类型属性（readonly element: HTMLElement | undefined）
+  const el = xterm.element
+  if (!el) return
+  // 容器无尺寸时 fit 无意义且可能触发 dimensions 抛错
+  if (el.clientWidth <= 0 || el.clientHeight <= 0) return
+  // 渲染器尚未就绪时跳过（_renderService.dimensions getter 会抛错）。
+  // 关键：不能读 renderService.dimensions 自身判空——getter 是 return this._renderer.value!.dimensions，
+  // 当 MutableDisposable 已 dispose（xterm.dispose() 链触发后 _isDisposed=true，value 永远 undefined）
+  // 时读 .dimensions 即抛 "Cannot read properties of undefined (reading 'dimensions')"。
+  // 用 hasRenderer() 判 _renderer.value 是否就绪，绕开 getter。
+  const core = (xterm as any)['_core']
+  const renderService = core?.['_renderService']
+  if (!renderService?.hasRenderer?.()) return
+  try {
+    fitAddon.fit()
+  } catch (e) {
+    // 渲染器竞态等偶发错误：记录日志以便诊断持久性失败
+    console.warn('[safeFit] fit 失败:', e)
   }
 }
 
-/** 检测 xterm 是否包含可用的 _core API */
-function hasXTermCore(term: Terminal): term is Terminal & XTermInternals {
-  return '_core' in term && typeof (term as any)._core === 'object'
+/**
+ * 全局拦截 xterm 内部 RenderService 的 dimensions getter，根治
+ * "Cannot read properties of undefined (reading 'dimensions')" 崩溃。
+ *
+ * 根因（xterm 5.5.0 源码 src/browser/services/RenderService.ts:50）：
+ *   public get dimensions(): IRenderDimensions { return this._renderer.value!.dimensions; }
+ * `_renderer` 是 MutableDisposable（src/common/Lifecycle.ts:50-84），
+ * 其 value getter 在 _isDisposed=true（即 xterm.dispose() 链触发后，
+ * RenderService 所在的 _renderer 被 dispose）时永远返回 undefined；
+ * 此外 addon 切换瞬间（WebGL/Canvas activate 失败、setRenderer 未调用）也会
+ * 出现 _renderer.value 为 undefined。此时读 .dimensions 即抛错。
+ *
+ * xterm 内部有 7 处直接同步读 _renderService.dimensions（Viewport 构造期、
+ * CompositionHelper、MouseService、SelectionService、AccessibilityManager、
+ * BufferDecorationRenderer、Terminal._syncTextArea/_reportWindowsOptions），
+ * 外部无法逐个守护——唯一彻底的解法是在 RenderService.prototype 上用
+ * Object.defineProperty 替换 getter，当 _renderer.value 为 undefined 时
+ * 返回全 0 安全默认值而非抛错。
+ *
+ * 该补丁幂等：仅 patch 一次，全局生效。对所有 xterm 实例共享的 prototype
+ * 做替换，故每个 xterm 实例 open() 之后调用一次即可（多次调用安全）。
+ */
+let dimensionsPatchApplied = false
+export function patchRenderServiceDimensions(xterm: Terminal): void {
+  if (dimensionsPatchApplied) return
+  const core = (xterm as any)['_core']
+  const renderService = core?.['_renderService']
+  // _renderService 是 prototype 上的实例，取其构造器原型做一次性 patch
+  const proto = renderService?.constructor?.prototype
+  if (!proto) return
+
+  try {
+    Object.defineProperty(proto, 'dimensions', {
+      configurable: true,
+      enumerable: true,
+      get(this: any): any {
+        // renderer 已就绪时走原生路径，返回真实 dimensions
+        const renderer = this?._renderer?.value
+        if (renderer) return renderer.dimensions
+        // renderer 未就绪（MutableDisposable 已 dispose 或 addon 切换瞬间）：
+        // 返回全 0 安全默认值，避免任何调用方拿到 undefined.dimensions
+        return DIMENSIONS_FALLBACK
+      },
+    })
+    dimensionsPatchApplied = true
+  } catch (e) {
+    console.warn('[xtermEnhancements] patch RenderService.dimensions getter 失败:', e)
+  }
 }
 
-/** 在本增强模块测试过的 xterm 版本 */
-const TESTED_XTERM_VERSIONS = ['5.5.0']
+/** dimensions getter 的全 0 安全兜底值（结构与 IRenderDimensions 一致） */
+const DIMENSIONS_FALLBACK = {
+  css: { canvas: { width: 0, height: 0 }, cell: { width: 0, height: 0 } },
+  device: {
+    canvas: { width: 0, height: 0 },
+    cell: { width: 0, height: 0 },
+    char: { width: 0, height: 0, left: 0, top: 0 },
+  },
+}
 
 /**
  * 获取 xterm 版本号。
@@ -112,6 +195,8 @@ export class FlowControl {
   private readonly bytesThreshold = 1024 * 128
   /** 写入次数阈值：小包高频场景下，累计到此次数即使未达字节阈值也注册回调采样 pending，避免背压永不触发 */
   private readonly writeCountThreshold = 64
+  /** 已提交给 xterm、等待 parser completion callback 的写入完成器 */
+  private pendingWriteFinishers = new Set<() => void>()
   private disposed = false
   private stats = {
     totalWrites: 0,
@@ -124,8 +209,6 @@ export class FlowControl {
 
   async write(data: string): Promise<void> {
     // dispose 后不再写入，避免向已销毁的 xterm 实例写入。
-    // 非阻塞分支无 await、同步执行不会被 dispose 打断，故入口检查与下方
-    // 阻塞分支 await 后的 disposed 复查共同覆盖全部时序。
     if (this.disposed) return
     this.stats.totalWrites++
     this.stats.totalBytes += data.length
@@ -136,14 +219,17 @@ export class FlowControl {
       await new Promise<void>((resolve) => {
         this.resolveQueue.push(resolve)
       })
-      // await 期间可能已 dispose，停止后续对 xterm 的访问，避免写入已销毁实例
+      // await 期间可能已 dispose，停止后续对 xterm 的访问
       if (this.disposed) return
     }
+
     this.bytesWritten += data.length
     this.writesSinceLastCallback++
-    // 字节阈值覆盖大包场景；写入次数阈值兜底小包高频场景（如 SSH 逐字符 echo），
-    // 否则 bytesWritten 永远凑不到 128KB，pendingCallbacks 恒为 0，背压形同虚设。
-    if (this.bytesWritten > this.bytesThreshold || this.writesSinceLastCallback >= this.writeCountThreshold) {
+    // 每次写入都等待 xterm parser completion callback，保证调用方读取到更新后的
+    // buffer 状态；只有命中采样阈值的 callback 才参与高低水位背压统计。
+    const trackedForBackpressure =
+      this.bytesWritten > this.bytesThreshold || this.writesSinceLastCallback >= this.writeCountThreshold
+    if (trackedForBackpressure) {
       this.pendingCallbacks++
       this.stats.maxPendingCallbacks = Math.max(this.stats.maxPendingCallbacks, this.pendingCallbacks)
       this.bytesWritten = 0
@@ -151,19 +237,40 @@ export class FlowControl {
       if (!this.blocked && this.pendingCallbacks > this.highWatermark) {
         this.blocked = true
       }
-      this.xterm.write(data, () => {
-        this.pendingCallbacks--
-        if (this.blocked && this.pendingCallbacks < this.lowWatermark) {
-          this.blocked = false
-          // 逐个释放等待者；resolveQueue 在阻塞解除后应清空
-          while (this.resolveQueue.length > 0) {
-            this.resolveQueue.shift()?.()
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false
+      const finish = (): void => settle()
+      const settle = (error?: unknown): void => {
+        if (settled) return
+        settled = true
+        this.pendingWriteFinishers.delete(finish)
+
+        if (trackedForBackpressure && this.pendingCallbacks > 0) {
+          this.pendingCallbacks--
+          if (this.blocked && this.pendingCallbacks < this.lowWatermark) {
+            this.blocked = false
+            // 逐个释放等待者；resolveQueue 在阻塞解除后应清空
+            while (this.resolveQueue.length > 0) {
+              this.resolveQueue.shift()?.()
+            }
           }
         }
-      })
-    } else {
-      this.xterm.write(data)
-    }
+        if (error === undefined) {
+          resolve()
+        } else {
+          reject(error)
+        }
+      }
+
+      this.pendingWriteFinishers.add(finish)
+      try {
+        this.xterm.write(data, finish)
+      } catch (e) {
+        settle(e)
+      }
+    })
   }
 
   /** 获取性能统计数据 */
@@ -175,21 +282,25 @@ export class FlowControl {
   }
 
   /**
-   * 销毁并清理资源：解除所有阻塞中的等待者，避免组件卸载后 Promise 永不 resolve
-   * 造成闭包引用泄漏。xterm.write 的完成回调在 xterm 销毁后不一定触发，
-   * 故不能依赖回调来释放等待者。dispose 后的 write 调用会在 await 解除后安全跳过。
+   * 销毁并清理资源：解除高水位阻塞等待者和等待 xterm callback 的写入，避免
+   * callback 在 xterm 销毁后不再触发而令 writeChain 永久挂起。完成器是幂等的，
+   * callback 若在 dispose 后到达也不会重复结算。
    */
   dispose(): void {
     this.disposed = true
     this.blocked = false
-    this.pendingCallbacks = 0
-    // 逐个 resolve 等待者以解除阻塞；write 在 await 后会因 disposed 检查而跳过 xterm 访问。
-    // 用 resolve 而非 reject：PinnedScroll.writeChain 已统一 catch，reject 会冒泡为
-    // unhandledrejection，且写入未完成对用户无意义，安全解除阻塞即可。
-    const waiters = this.resolveQueue.splice(0)
-    for (const resolve of waiters) {
+
+    const blockedWaiters = this.resolveQueue.splice(0)
+    for (const resolve of blockedWaiters) {
       resolve()
     }
+
+    const writeFinishers = Array.from(this.pendingWriteFinishers)
+    for (const finish of writeFinishers) {
+      finish()
+    }
+    this.pendingWriteFinishers.clear()
+    this.pendingCallbacks = 0
   }
 }
 
@@ -216,16 +327,22 @@ export interface PinnedScrollStats {
  */
 export class PinnedScroll {
   private pinnedToBottom = true
-  private xtermCore: any
-  /** _core.scrollToBottom 的 bound 副本，供本管理器主动滚底时直接调用 */
-  private originalScrollToBottom: (() => void) | null = null
   private wheelHandler: (e: WheelEvent) => void
-  /** 滚轮解 pin 排定的 RAF id，dispose 时取消，避免回调在销毁后访问 xterm.buffer */
+  /** 滚轮状态同步 RAF id，dispose 时取消，避免回调在销毁后访问 xterm.buffer */
   private rafId: number | null = null
+  /**
+   * 向下滚轮的延迟帧 RAF id。
+   * 向下滚到底部时需等 xterm 把滚轮事件应用到 viewportY 后再读 isAtBottom，
+   * 故安排嵌套 RAF：第一帧等待 xterm 处理滚轮，第二帧再判定是否恢复 pinned。
+   * 向上滚时取消此延迟帧，避免后续误判回 pinned。
+   */
+  private delayedRafId: number | null = null
+  /** 明确的用户滚动意图版本；异步写入不得应用更早版本捕获的视口快照 */
+  private scrollGeneration = 0
+  private scrollDisposable: { dispose: () => void } | null = null
+  private static readonly BOTTOM_TOLERANCE = 1
   /** 写入串行化锁：onData 回调同步触发多次时，保证 write 按序执行，避免背压与滚动位置错乱 */
   private writeChain: Promise<void> = Promise.resolve()
-  /** 降级模式：_core API 不可用时回退到基础行为 */
-  private degradedMode = false
   /** 已销毁标记 */
   private disposed = false
   /** 错误统计 */
@@ -243,52 +360,63 @@ export class PinnedScroll {
     // 版本兼容性检查（全局只检查一次）
     checkXTermVersion()
 
-    if (!hasXTermCore(xterm)) {
-      console.warn('[PinnedScroll] xterm._core 不可用，启用降级模式（基础滚动功能）')
-      this.degradedMode = true
-      this.xtermCore = null
-    } else {
-      this.xtermCore = (xterm as any)['_core']
-      if (this.xtermCore) {
-        // 接管滚底决策：用官方选项 scrollOnUserInput=false 阻止"用户输入时自动滚底"
-        // （xterm 在用户按键且 ybase!==ydisp 时会触发 onRequestScrollToBottom → scrollToBottom，
-        // 见 CoreService.triggerDataEvent）。这替代了早期版本"置空 _core.scrollToBottom"的做法——
-        // 那种做法会令公开 API Terminal.scrollToBottom() 静默失效，且对"新输出自动滚底"无效
-        // （后者由 BufferService.scroll() 的 isUserScrolling 标志控制，不经过 scrollToBottom）。
-        xterm.options.scrollOnUserInput = false
-        // 保存 scrollToBottom 的 bound 副本，供本管理器主动滚底时直接调用。
-        // 不改写 _core 上的任何方法，避免污染 xterm 内部状态与公开 API。
-        this.originalScrollToBottom = this.xtermCore.scrollToBottom.bind(this.xtermCore)
-      }
-    }
+    // 接管滚底决策：阻止用户输入把历史视图强制拉到底部。主动滚底统一使用
+    // Terminal.scrollToBottom() 公开 API，避免依赖 _core.scrollToBottom。
+    xterm.options.scrollOnUserInput = false
 
     this.wheelHandler = (e: WheelEvent) => {
-      // 滚轮向上立即解除 pinned，确保在下一帧的写入前生效
+      this.scrollGeneration++
       if (e.deltaY < 0) {
+        // 滚轮向上立即解除 pinned，确保在 xterm 实际移动 viewport 前也能阻止写入拉底
         this.pinnedToBottom = false
+        // 向上滚时取消待执行的"延迟帧判定"，避免后续误判回 pinned
+        if (this.delayedRafId !== null) {
+          cancelAnimationFrame(this.delayedRafId)
+          this.delayedRafId = null
+        }
+      } else {
+        // 滚轮向下：不立即操作，安排嵌套延迟帧。第一帧等待 xterm 把滚轮事件应用到
+        // viewportY，第二帧再用 isAtBottom 判定是否已到底部、恢复 pinnedToBottom。
+        // 修复：用户回看历史时向下滚到底部，后续新输出应能自动跟随到底部。
+        if (this.delayedRafId === null) {
+          this.delayedRafId = requestAnimationFrame(() => {
+            // 第一帧：xterm 已处理滚轮事件，viewportY 已更新。
+            // 安排第二帧做最终判定，delayedRafId 改持第二帧 id 供取消。
+            this.delayedRafId = requestAnimationFrame(() => {
+              this.delayedRafId = null
+              this.updatePinnedState()
+            })
+          })
+        }
       }
-      // 取消尚未执行的 RAF 避免回调堆积；dispose 时也会 cancelAnimationFrame
-      if (this.rafId !== null) cancelAnimationFrame(this.rafId)
-      this.rafId = requestAnimationFrame(() => {
-        this.rafId = null
-        this.updatePinnedState()
-      })
+      // 每帧最多同步一次，不能在连续 wheel 时反复取消并把校正推迟到滚动停止后。
+      if (this.rafId === null) {
+        this.rafId = requestAnimationFrame(() => {
+          this.rafId = null
+          this.updatePinnedState()
+        })
+      }
     }
   }
 
-  /** 在终端宿主元素上注册滚轮监听（capture 阶段，xterm 可能在内部元素 stopPropagation） */
+  /** 在终端宿主元素上注册滚轮监听，并用公开 onScroll 补充同步实际 buffer 状态 */
   attach(host: HTMLElement): void {
     if (this.disposed) {
       console.warn('[PinnedScroll] 尝试 attach 已销毁的实例')
       return
     }
     host.addEventListener('wheel', this.wheelHandler, { capture: true, passive: true })
+    if (!this.scrollDisposable) {
+      this.scrollDisposable = this.xterm.onScroll(() => this.updatePinnedState())
+    }
   }
 
   detach(host: HTMLElement): void {
     if (!host) return
     try {
       host.removeEventListener('wheel', this.wheelHandler, { capture: true })
+      this.scrollDisposable?.dispose()
+      this.scrollDisposable = null
     } catch (e) {
       console.warn('[PinnedScroll] detach 失败:', e)
     }
@@ -296,7 +424,7 @@ export class PinnedScroll {
 
   private isAtBottom(): boolean {
     const buffer = this.xterm.buffer.active
-    return buffer.viewportY >= buffer.baseY - 1
+    return buffer.baseY - buffer.viewportY <= PinnedScroll.BOTTOM_TOLERANCE
   }
 
   private updatePinnedState(): void {
@@ -311,7 +439,10 @@ export class PinnedScroll {
 
   /**
    * 写入数据并维护滚动位置。所有终端输出都应通过此方法写入。
-   * 在写入前捕获 pinned 状态与 viewportY（异步写入期间 RAF 回调可能改变状态）。
+   * 在写入前捕获 pinned 状态与 viewportY（异步写入期间 RAF/onScroll 回调可能改变状态）。
+   * 写入完成后：写入前已跟随底部则无条件滚到底部（保证新输出始终可见）；
+   * 写入前在回看历史则按 scrollGeneration 判定是否恢复原位置——等待期间有新滚动
+   * 意图（含向下滚向底部）时绝不拉回，避免抵消用户滚动、使其无法到达底部。
    * 通过写入锁串行化，保证 onData 同步多次回调时背压与滚动位置不被并发破坏。
    * 单次写入失败时记录错误并累计计数，连续错误达到阈值后向用户显示警告。
    */
@@ -340,44 +471,69 @@ export class PinnedScroll {
     if (this.disposed) return
 
     this.stats.totalWrites++
+    // 在捕获快照前读取实际 buffer，避免依赖尚未执行的 RAF/onScroll。
+    this.updatePinnedState()
+    const writeGeneration = this.scrollGeneration
+    const wasPinned = this.pinnedToBottom
+    const savedViewportY = this.xterm.buffer.active.viewportY
 
-    // 降级模式：直接写入，不做滚动位置控制
-    if (this.degradedMode) {
-      await this.flowControl.write(data)
-      // await 期间可能已 dispose，停止后续对 xterm 的访问
-      if (this.disposed) return
-      this.consecutiveErrors = 0
+    // FlowControl.write 在对应 xterm parser completion callback 后才完成，await 会跨
+    // setTimeout 边界，期间事件循环空闲，触控板/鼠标的惯性滚动会触发 wheelHandler
+    // 递增 scrollGeneration。
+    await this.flowControl.write(data)
+    if (this.disposed) return
+    this.consecutiveErrors = 0
+
+    if (wasPinned) {
+      // 写入前已跟随底部：新输出无条件滚到底部。不检查 scrollGeneration——await 期间
+      // 触控板惯性上滚会把 scrollGeneration 推高，若据此跳过滚底，回车后视口会停在
+      // 原位、新输出不再跟随，必须手动滚到底部才能恢复（回归 c12dcf6）。惯性滚动并非
+      // 用户"主动回看历史"的明确意图，不应剥夺跟随。
+      // 代价：若用户在底部主动上滚回看，新输出会把他拉回底部——这是重构前的既有行为。
+      this.pinnedToBottom = true
+      this.xterm.scrollToBottom()
       return
     }
 
-    const wasPinned = this.pinnedToBottom
-    const savedViewportY = this.xterm.buffer.active.viewportY
-    await this.flowControl.write(data)
-    // await 期间组件可能卸载并销毁 xterm，恢复滚动位置前必须重新检查
-    if (this.disposed) return
-    this.consecutiveErrors = 0 // 写入成功，重置错误计数
-
-    if (wasPinned) {
-      this.originalScrollToBottom?.()
-    } else {
-      // 恢复用户滚动位置 —— xterm 在快速输出时会扰动 viewportY，
-      // 需手动恢复到写入前的位置，避免视图被带偏。
-      const maxScroll = this.xterm.buffer.active.baseY
-      const targetY = Math.min(savedViewportY, maxScroll)
-      if (this.xterm.buffer.active.viewportY !== targetY) {
-        this.xterm.scrollToLine(targetY)
+    if (writeGeneration !== this.scrollGeneration) {
+      // 写入前在回看历史，且等待期间出现了新的滚动意图（含向下滚向底部）：旧快照已过期，
+      // 绝不能把视口拉回 savedViewportY，否则会抵消用户向下滚动、使其无法到达底部。
+      // 仅按当前实际位置同步 pinned 状态：已在底部则恢复跟随，否则保持回看。
+      if (this.isAtBottom()) {
+        this.pinnedToBottom = true
+        this.xterm.scrollToBottom()
+      } else {
+        this.pinnedToBottom = false
       }
+      return
     }
+
+    // 写入前在回看历史，且等待期间无新滚动意图：恢复到写入前的回看位置，
+    // 抵消 xterm 在快速输出时对 viewportY 的扰动。
+    const maxScroll = this.xterm.buffer.active.baseY
+    const targetY = Math.min(savedViewportY, maxScroll)
+    if (this.xterm.buffer.active.viewportY !== targetY) {
+      this.xterm.scrollToLine(targetY)
+    }
+    this.pinnedToBottom = false
   }
 
   /** 用户主动滚到底部（如点击状态栏或快捷键） */
   scrollToBottom(): void {
     this.pinnedToBottom = true
-    if (!this.degradedMode) {
-      this.originalScrollToBottom?.()
-    } else {
-      this.xterm.scrollToBottom()
-    }
+    this.xterm.scrollToBottom()
+  }
+
+  /**
+   * 用户主动输入（按键、粘贴、回车等）时调用。
+   * 用户输入意味着"结束回看、准备查看新输出"，故退出回看状态并滚到底部，
+   * 后续远端回显与命令输出即可自动跟随底部，无需手动滚动。
+   * scrollOnUserInput=false 已接管此决策，xterm 默认行为不再介入。
+   */
+  onUserInput(): void {
+    if (this.disposed) return
+    this.pinnedToBottom = true
+    this.xterm.scrollToBottom()
   }
 
   /**
@@ -404,11 +560,7 @@ export class PinnedScroll {
     // await 期间组件可能卸载并销毁 xterm，停止后续访问
     if (this.disposed) return
 
-    if (!this.degradedMode) {
-      this.originalScrollToBottom?.()
-    } else {
-      this.xterm.scrollToBottom()
-    }
+    this.xterm.scrollToBottom()
   }
 
   /**
@@ -422,22 +574,28 @@ export class PinnedScroll {
   withScrollPreservation(fn: () => void, forceRepaint = false): void {
     if (this.disposed) return
 
-    if (this.degradedMode) {
-      fn()
-      return
-    }
-
+    this.updatePinnedState()
+    const generation = this.scrollGeneration
     const wasPinned = this.pinnedToBottom
     const savedViewportY = this.xterm.buffer.active.viewportY
     fn()
-    if (wasPinned) {
-      this.originalScrollToBottom?.()
-    } else {
-      const maxScroll = this.xterm.buffer.active.baseY
-      const targetY = Math.min(savedViewportY, maxScroll)
-      if (this.xterm.buffer.active.viewportY !== targetY) {
-        this.xterm.scrollToLine(targetY)
+
+    // fn 当前均为同步 fit；generation 检查防止未来同步重入引入过期快照恢复。
+    if (generation === this.scrollGeneration) {
+      if (wasPinned) {
+        this.pinnedToBottom = true
+        this.xterm.scrollToBottom()
+      } else {
+        const maxScroll = this.xterm.buffer.active.baseY
+        const targetY = Math.min(savedViewportY, maxScroll)
+        if (this.xterm.buffer.active.viewportY !== targetY) {
+          this.xterm.scrollToLine(targetY)
+        }
+        this.pinnedToBottom = false
       }
+    } else {
+      this.updatePinnedState()
+      if (this.pinnedToBottom) this.xterm.scrollToBottom()
     }
     if (forceRepaint) {
       // 公开 API：所有渲染器（DOM/Canvas/WebGL）均支持，立即触发全屏重绘
@@ -467,11 +625,13 @@ export class PinnedScroll {
       cancelAnimationFrame(this.rafId)
       this.rafId = null
     }
-    // 本管理器未改写 _core 上的任何方法（构造时仅保存 bound 副本与设置官方选项），
-    // 故无需还原 _core 状态；xterm 实例随后会被外层 dispose，选项随之失效。
-    this.xtermCore = null
-    this.originalScrollToBottom = null
-    // 级联销毁背压控制器，释放阻塞中的等待者
+    if (this.delayedRafId !== null) {
+      cancelAnimationFrame(this.delayedRafId)
+      this.delayedRafId = null
+    }
+    this.scrollDisposable?.dispose()
+    this.scrollDisposable = null
+    // 级联销毁背压控制器，释放阻塞与等待 callback 的写入
     this.flowControl.dispose()
   }
 }
@@ -562,6 +722,9 @@ export class RendererManager {
       console.warn('[RendererManager] WebGL 渲染器加载失败，回退到 Canvas:', e)
       this.webglUnavailable = true
       this.stats.activeRenderer = 'none'
+      // addon 构造失败时 _renderer.value 可能为 undefined，先兜底重建 DOM renderer，
+      // 再让 attachCanvas 尝试切到 Canvas（成功则覆盖 DOM renderer）。
+      this.restoreDomRenderer()
       this.attachCanvas()
       return false
     }
@@ -580,6 +743,34 @@ export class RendererManager {
     } catch (e) {
       console.warn('[RendererManager] Canvas 渲染器加载失败，使用默认 DOM 渲染器:', e)
       this.stats.activeRenderer = 'dom'
+      // 兜底：Canvas addon 构造失败时 _renderer.value 可能为 undefined（旧 renderer 已 dispose），
+      // 此时 _renderService.dimensions 会抛 "Cannot read properties of undefined (reading 'dimensions')"。
+      // 用 xterm 内部 API 重建 DOM renderer，保证 _renderer.value 始终有值。
+      this.restoreDomRenderer()
+    }
+  }
+
+  /**
+   * 当 WebGL/Canvas addon 加载失败、_renderService._renderer.value 为 undefined 时，
+   * 用 xterm 内部 API 重建 DOM renderer 兜底。
+   *
+   * xterm 5.5.0 内部：_core._renderService.setRenderer(_core._createRenderer())，
+   * _createRenderer 返回 DomRenderer 实例。这是 open() 内部 hasRenderer()||setRenderer()
+   * 的同一调用路径，可安全复用。无公开类型声明故用 any。
+   */
+  private restoreDomRenderer(): void {
+    try {
+      const core = (this.xterm as any)['_core']
+      const renderService = core?.['_renderService']
+      // 已有 renderer 则无需重建
+      if (renderService?.hasRenderer?.()) return
+      const renderer = core?._createRenderer?.()
+      if (renderer) {
+        renderService?.setRenderer?.(renderer)
+        this.stats.activeRenderer = 'dom'
+      }
+    } catch (e) {
+      console.warn('[RendererManager] 重建 DOM 渲染器失败:', e)
     }
   }
 
@@ -672,7 +863,13 @@ export class RendererManager {
     if (this.disposed) return
 
     try {
+      // _renderService 可能为 undefined（渲染器尚未附加或已销毁）。
+      // 注意：不要读 renderService.dimensions——该 getter 返回 _renderer.value.dimensions，
+      // 当 _renderer.value 为 undefined（addon 加载失败已 dispose 旧 renderer 但未 setRenderer 新的）
+      // 时会抛 "Cannot read properties of undefined (reading 'dimensions')"。
+      // 用 hasRenderer() 判 renderer 是否就绪，绕开 getter。
       const renderService = this.xtermCore?._renderService
+      if (!renderService?.hasRenderer?.()) return
       renderService?.clear?.()
       renderService?.handleResize?.(this.xterm.cols, this.xterm.rows)
     } catch (e) {
