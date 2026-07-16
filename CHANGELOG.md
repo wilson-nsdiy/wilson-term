@@ -5,6 +5,18 @@ All notable changes to Wilson Term will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.11.0] - 2026-07-17
+
+### Changed
+
+- 升级终端核心引擎至最新版本，与 VSCode 1.130 保持一致，带来更好的渲染性能与显示兼容性
+- 终端渲染方式调整为优先使用 GPU 加速（WebGL），在不支持时自动回退到普通模式，移除已淘汰的 Canvas 渲染选项
+- 升级本地终端底层组件，提升本地 Shell 的稳定性与兼容性
+
+### Fixed
+
+- 升级后自动将旧版本中已移除的「Canvas」渲染设置规整为兼容模式，避免启动异常或设置显示错乱
+
 ## [v0.10.0] - 2026-07-09
 
 ### Added
