@@ -10,7 +10,8 @@ import { resolveLogConfig } from '../utils/logConfig'
 import { resolveSettings } from '../utils/settingsResolver'
 import { buildFontFamily } from '../utils/font'
 import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseModeEnabled } from '../utils/pasteFilter'
-import { FlowControl, PinnedScroll, RendererManager } from '../utils/xtermEnhancements'
+import { computeSearchMatchInfo } from '../utils/searchMatch'
+import { FlowControl, PinnedScroll, RendererManager, patchRenderServiceDimensions, safeFit } from '../utils/xtermEnhancements'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
 import TerminalStatusBar from './TerminalStatusBar'
@@ -29,6 +30,23 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
+  /**
+   * 自管理的搜索匹配高亮 decoration 销毁函数集合。
+   *
+   * 不依赖 xterm SearchAddon 的 _highlightAllMatches：该方法内部去重循环
+   * `while (result && (prevResult?.row !== result.row || prevResult?.col !== result.col))`
+   * 在匹配项位于行尾或跨 wrap 边界时会提前退出，导致只高亮第一个匹配。
+   * 这里根据 computeSearchMatchInfo 返回的完整匹配列表，自行通过
+   * registerDecoration 为每个匹配创建 matchBackground 高亮。
+   */
+  const searchHighlightDisposablesRef = useRef<Array<() => void>>([])
+  /** 清理并重置自管理的搜索高亮 decoration（每项调用包 try/catch，避免单次失败跳过其余） */
+  const disposeSearchHighlights = () => {
+    for (const d of searchHighlightDisposablesRef.current) {
+      try { d() } catch { /* 已随 xterm.dispose() 销毁 */ }
+    }
+    searchHighlightDisposablesRef.current = []
+  }
   /** 自定义跟随底部滚动状态管理器 */
   const pinnedScrollRef = useRef<PinnedScroll | null>(null)
   /** 渲染器管理器（WebGL/Canvas 加速 + GPU 上下文恢复） */
@@ -129,6 +147,9 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     // 监听 xterm 用户输入，发送到连接
     const inputDisposable = xterm.onData((data) => {
+      // 用户输入意味着结束回看、准备查看新输出，立即跟随底部，
+      // 后续远端回显与命令输出即可自动滚到底部。
+      pinnedScrollRef.current?.onUserInput()
       rendererPluginHost.feedInput(sid, data)
       window.api.connection.write(sid, data)
     })
@@ -235,7 +256,11 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     xterm.unicode.activeVersion = '11'
 
     xterm.open(terminalRef.current)
-    fitAddon.fit()
+    // 在 open() 之后立即 patch RenderService.dimensions getter，根治
+    // "Cannot read properties of undefined (reading 'dimensions')" 崩溃。
+    // 必须在 open() 之后调用——_renderService 在 open() 内部才创建。
+    patchRenderServiceDimensions(xterm)
+    safeFit(xterm, fitAddon)
 
     // 初始化写入背压控制器，并交给 PinnedScroll 持有
     const flowControl = new FlowControl(xterm)
@@ -285,14 +310,6 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
         // base64 解码失败，忽略
       }
       return true
-    })
-
-    // 监听搜索结果变化，通知搜索栏
-    const searchResultDisposable = searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
-      const resultEvent = new CustomEvent('terminal:searchResult', {
-        detail: { resultIndex, resultCount }
-      })
-      window.dispatchEvent(resultEvent)
     })
 
     // 监听选中状态变化
@@ -352,7 +369,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     const runResize = () => {
       resizePending = false
       lastResize = Date.now()
-      const fit = () => fitAddon.fit()
+      const fit = () => safeFit(xtermRef.current, fitAddon)
       if (pinnedScrollRef.current) {
         pinnedScrollRef.current.withScrollPreservation(fit, true)
       } else {
@@ -396,7 +413,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
 
     const handleCompositionEnd = () => {
       // IME 组合结束后 fit，保持滚动位置与其他 fit 路径一致
-      const fit = () => fitAddon.fit()
+      const fit = () => safeFit(xtermRef.current, fitAddon)
       if (pinnedScrollRef.current) {
         pinnedScrollRef.current.withScrollPreservation(fit, true)
       } else {
@@ -411,7 +428,6 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       compositionMo?.disconnect()
       terminalRef.current?.removeEventListener('contextmenu', handleContextMenu)
       selectionChangeDisposable.dispose()
-      searchResultDisposable.dispose()
       unbindData()
 
       // 清理增强器（按依赖顺序：先 PinnedScroll 再 RendererManager，最后 xterm）
@@ -438,6 +454,8 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       xtermRef.current = null
       fitAddonRef.current = null
       searchAddonRef.current = null
+      // 清理自管理的搜索高亮 decoration
+      disposeSearchHighlights()
     }
   }, []) // 仅在挂载时创建 xterm 实例
 
@@ -565,7 +583,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
         // 标签页重新可见时恢复可能丢失的 GPU 渲染器上下文
         rendererManagerRef.current?.reactivate()
         // fit 并保持滚动位置（pinnedScroll 不可用时仍保证 fit 执行）
-        const fit = () => fitAddonRef.current?.fit()
+        const fit = () => safeFit(xtermRef.current, fitAddonRef.current)
         if (pinnedScrollRef.current) {
           pinnedScrollRef.current.withScrollPreservation(fit, true)
         } else {
@@ -594,7 +612,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       xterm.options.theme = { ...xterm.options.theme, background: r.backgroundImage ? '#00000000' : r.background, foreground: r.foreground }
     }
     // 字体变化会改变单元尺寸，fit 时保持滚动位置（pinnedScroll 不可用时仍保证 fit 执行）
-    const fit = () => fitAddonRef.current?.fit()
+    const fit = () => safeFit(xtermRef.current, fitAddonRef.current)
     if (pinnedScrollRef.current) {
       pinnedScrollRef.current.withScrollPreservation(fit, true)
     } else {
@@ -706,24 +724,77 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       if (action === 'clear') {
         searchAddon.clearDecorations()
         searchAddon.clearActiveDecoration()
+        disposeSearchHighlights()
         return
       }
 
-      const options: { regex?: boolean; wholeWord?: boolean; caseSensitive?: boolean; incremental?: boolean; decorations?: { matchBackground: string; activeMatchBackground: string; matchOverviewRuler: string; activeMatchColorOverviewRuler: string } } = {}
+      // 先清理上一轮自管理的高亮 decoration
+      disposeSearchHighlights()
+
+      const options: { regex?: boolean; wholeWord?: boolean; caseSensitive?: boolean; incremental?: boolean } = {}
       if (matchCase) options.caseSensitive = true
       if (matchRegex) options.regex = true
       if (action === 'init') options.incremental = true
-      options.decorations = {
-        matchBackground: '#585b70',
-        activeMatchBackground: '#f9e2af',
-        matchOverviewRuler: '#585b70',
-        activeMatchColorOverviewRuler: '#f9e2af'
-      }
 
+      // 不传 decorations 给 SearchAddon：addon 的 _highlightAllMatches 在匹配项
+      // 位于行尾或跨 wrap 边界时会提前退出循环，导致只高亮第一个匹配。
+      // 这里只让 addon 负责"选中并滚动到当前匹配"，matchBackground 高亮
+      // 由下面的自管理 decoration 完成。
       if (action === 'init' || action === 'next') {
         searchAddon.findNext(searchText, options)
       } else if (action === 'prev') {
         searchAddon.findPrevious(searchText, options)
+      }
+
+      const xterm = xtermRef.current
+      if (xterm) {
+        const info = computeSearchMatchInfo(xterm, searchText, matchCase, matchRegex)
+        if (info) {
+          // 为每个匹配分段创建 matchBackground 高亮 decoration
+          // 当前选中的逻辑匹配对应的所有分段用 activeMatchBackground
+          const activeLogical = info.resultIndex
+          // activeLogical < 0 表示无选中匹配，此时 activeSegStart > activeSegEnd，
+          // isActive 对所有分段为 false
+          const activeSegStart = activeLogical >= 0 && activeLogical < info.logicalStarts.length
+            ? info.logicalStarts[activeLogical]
+            : Number.POSITIVE_INFINITY
+          const activeSegEnd = activeLogical >= 0
+            ? (activeLogical + 1 < info.logicalStarts.length
+                ? info.logicalStarts[activeLogical + 1]
+                : info.matches.length)
+            : -1
+          for (let i = 0; i < info.matches.length; i++) {
+            const m = info.matches[i]
+            const isActive = i >= activeSegStart && i < activeSegEnd
+            // registerMarker(cursorYOffset) 中 cursorYOffset = -baseY - cursorY + row
+            // 与 SearchAddon._selectResult 的算法一致
+            const cursorYOffset = -xterm.buffer.active.baseY - xterm.buffer.active.cursorY + m.row
+            const marker = xterm.registerMarker(cursorYOffset)
+            if (!marker) continue
+            const decoration = xterm.registerDecoration({
+              marker,
+              x: m.col,
+              width: m.length,
+              backgroundColor: isActive ? '#cba6f7aa' : '#585b70aa',
+              layer: 'top',
+            })
+            if (decoration) {
+              const disposables: Array<() => void> = []
+              disposables.push(() => marker.dispose())
+              disposables.push(() => decoration.dispose())
+              searchHighlightDisposablesRef.current.push(() => {
+                for (const d of disposables) {
+                  try { d() } catch { /* 已销毁 */ }
+                }
+              })
+            } else {
+              marker.dispose()
+            }
+          }
+          window.dispatchEvent(new CustomEvent('terminal:searchResult', {
+            detail: { sessionId, resultIndex: info.resultIndex, resultCount: info.resultCount }
+          }))
+        }
       }
     }
 

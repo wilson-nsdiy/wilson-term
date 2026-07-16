@@ -31,7 +31,10 @@ const SearchBar: React.FC = () => {
   // 监听搜索结果
   useEffect(() => {
     const handler = (e: Event) => {
-      const { resultIndex, resultCount } = (e as CustomEvent).detail
+      const { sessionId: resultSid, resultIndex, resultCount } = (e as CustomEvent).detail
+      const activeSid = useAppStore.getState().activeSessionId
+      // 只接受当前活动会话的搜索结果，避免其他标签页事件污染
+      if (resultSid !== activeSid) return
       setMatchIndex(resultIndex)
       setMatchCount(resultCount)
     }
@@ -39,9 +42,12 @@ const SearchBar: React.FC = () => {
     return () => window.removeEventListener('terminal:searchResult', handler)
   }, [])
 
+  // 查找内容至少两个字符（避免单字符高频全缓冲区扫描）
+  const canSearch = searchText.length >= 2
+
   const doSearch = useCallback((direction: 'next' | 'prev' | 'init') => {
     const sid = useAppStore.getState().activeSessionId
-    if (!sid || !searchText) {
+    if (!sid || !canSearch) {
       setMatchCount(-1)
       setMatchIndex(-1)
       return
@@ -51,14 +57,20 @@ const SearchBar: React.FC = () => {
     }))
   }, [searchText, matchCase, matchRegex])
 
-  // 搜索文本或选项变化时重新搜索
+  // 搜索文本或选项变化时重新搜索（debounce，避免每次按键触发全缓冲区扫描）
+  const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
-    if (!searchVisible || !searchText) {
+    if (!searchVisible || !canSearch) {
+      if (initTimerRef.current) clearTimeout(initTimerRef.current)
       setMatchCount(-1)
       setMatchIndex(-1)
       return
     }
-    doSearch('init')
+    if (initTimerRef.current) clearTimeout(initTimerRef.current)
+    initTimerRef.current = setTimeout(() => doSearch('init'), 200)
+    return () => {
+      if (initTimerRef.current) clearTimeout(initTimerRef.current)
+    }
   }, [searchText, matchCase, matchRegex, searchVisible, doSearch])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -72,7 +84,14 @@ const SearchBar: React.FC = () => {
 
   if (!searchVisible) return null
 
-  const matchInfo = matchCount >= 0 ? `${matchIndex + 1}/${matchCount}` : ''
+  // 自行计算匹配总数与当前位置，不依赖 xterm search addon 的 onDidChangeResults
+  // （后者在 wrap line 场景下 resultCount/resultIndex 不可靠）
+  let matchInfo = ''
+  if (matchCount > 0) {
+    matchInfo = matchIndex >= 0 ? `${matchIndex + 1}/${matchCount}` : `?/${matchCount}`
+  } else if (matchCount === 0) {
+    matchInfo = '0/0'
+  }
 
   return (
     <div className="absolute top-1 right-2 z-20 flex items-center gap-2 px-3 py-1.5 bg-[#1e1e2e] border border-[#4a4a5a] rounded-lg shadow-xl text-sm">
@@ -99,7 +118,7 @@ const SearchBar: React.FC = () => {
       <button
         title="上一个 (Shift+Enter)"
         onClick={() => doSearch('prev')}
-        disabled={!searchText}
+        disabled={!canSearch}
         className="text-gray-400 hover:text-gray-200 disabled:text-gray-600 disabled:cursor-not-allowed"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 15l-6-6-6 6"/></svg>
@@ -107,7 +126,7 @@ const SearchBar: React.FC = () => {
       <button
         title="下一个 (Enter)"
         onClick={() => doSearch('next')}
-        disabled={!searchText}
+        disabled={!canSearch}
         className="text-gray-400 hover:text-gray-200 disabled:text-gray-600 disabled:cursor-not-allowed"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>

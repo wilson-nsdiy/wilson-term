@@ -9,6 +9,7 @@ import CommandInput from './CommandInput'
 import ButtonBar from './ButtonBar'
 import SearchBar from './SearchBar'
 import { buildFontFamily } from '../utils/font'
+import { patchRenderServiceDimensions, safeFit } from '../utils/xtermEnhancements'
 import '@xterm/xterm/css/xterm.css'
 
 /** 欢迎终端：无活跃会话时显示欢迎信息 */
@@ -71,7 +72,9 @@ const WelcomeTerminal: React.FC = () => {
     xterm.loadAddon(fitAddon)
 
     xterm.open(terminalRef.current)
-    fitAddon.fit()
+    // patch RenderService.dimensions getter 根治 dimensions 崩溃（详见 xtermEnhancements 说明）
+    patchRenderServiceDimensions(xterm)
+    safeFit(xterm, fitAddon)
 
     if (settings.backgroundImage) {
       xterm.element?.classList.add('xterm-bg-image')
@@ -93,7 +96,7 @@ const WelcomeTerminal: React.FC = () => {
     xterm.writeln('')
 
     const handleResize = () => {
-      fitAddon.fit()
+      safeFit(xtermRef.current, fitAddonRef.current)
     }
     window.addEventListener('resize', handleResize)
 
@@ -109,7 +112,7 @@ const WelcomeTerminal: React.FC = () => {
   useEffect(() => {
     if (!terminalRef.current) return
     requestAnimationFrame(() => {
-      fitAddonRef.current?.fit()
+      safeFit(xtermRef.current, fitAddonRef.current)
     })
   }, [commandInputVisible, statusBarVisible, buttonBarVisible, sidebarOpen])
 
@@ -128,7 +131,7 @@ const WelcomeTerminal: React.FC = () => {
     } else {
       xterm.element?.classList.remove('xterm-bg-image')
     }
-    fitAddonRef.current?.fit()
+    safeFit(xtermRef.current, fitAddonRef.current)
   }, [settings.fontSize, settings.fontFamily, settings.background, settings.foreground, settings.backgroundImage])
 
   let bottomOffset = 0
