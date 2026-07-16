@@ -45,18 +45,26 @@ const UpdateDialog: React.FC<UpdateDialogProps> = ({ open, onClose }) => {
     window.api.app.checkUpdate(true)
   }, [])
 
+  // 关闭对话框：若正在下载，先终止下载流程再关闭
+  const handleClose = useCallback(() => {
+    if (snapshot?.status === 'downloading') {
+      window.api.app.cancelDownloadUpdate()
+    }
+    onClose()
+  }, [snapshot?.status, onClose])
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') onClose()
+    if (e.key === 'Escape') handleClose()
   }
 
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose} onKeyDown={handleKeyDown}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={handleClose} onKeyDown={handleKeyDown}>
       <div className="bg-gray-800 rounded-lg shadow-xl w-[500px] max-h-[75vh] border border-gray-600 flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-700 shrink-0">
           <h2 className="text-base font-medium text-gray-200">检查更新</h2>
-          <button onClick={onClose} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-600 text-gray-400 hover:text-white transition-colors">✕</button>
+          <button onClick={handleClose} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-600 text-gray-400 hover:text-white transition-colors">✕</button>
         </div>
 
         <div className="overflow-y-auto flex-1">
@@ -124,10 +132,17 @@ const UpdateDialog: React.FC<UpdateDialogProps> = ({ open, onClose }) => {
               安装并重启
             </button>
           )}
-          <button onClick={handleCheck} disabled={snapshot?.status === 'checking' || snapshot?.status === 'downloading'} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded text-sm text-white transition-colors">
-            {snapshot?.status === 'checking' ? '检查中...' : '检查更新'}
-          </button>
-          <button onClick={onClose} className="px-4 py-1.5 bg-gray-600 hover:bg-gray-500 rounded text-sm text-white transition-colors">关闭</button>
+          {snapshot?.status === 'downloading' && (
+            <button onClick={() => window.api.app.cancelDownloadUpdate()} className="px-4 py-1.5 bg-gray-600 hover:bg-gray-500 rounded text-sm text-white transition-colors">
+              取消下载
+            </button>
+          )}
+          {(!snapshot || !['available', 'downloading', 'downloaded'].includes(snapshot.status)) && (
+            <button onClick={handleCheck} disabled={snapshot?.status === 'checking'} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded text-sm text-white transition-colors">
+              {snapshot?.status === 'checking' ? '检查中...' : '检查更新'}
+            </button>
+          )}
+          <button onClick={handleClose} className="px-4 py-1.5 bg-gray-600 hover:bg-gray-500 rounded text-sm text-white transition-colors">关闭</button>
         </div>
       </div>
     </div>
