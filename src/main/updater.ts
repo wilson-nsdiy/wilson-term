@@ -1,4 +1,4 @@
-import { autoUpdater } from 'electron-updater'
+import { autoUpdater, CancellationToken } from 'electron-updater'
 import { BrowserWindow, app } from 'electron'
 import { loadIgnoredVersionsFromDisk, saveIgnoredVersionsToDisk, loadLastAutoCheckTimestamp, saveLastAutoCheckTimestamp } from './storage'
 import type { UpdateStatus, UpdateInfoSnapshot, UpdateProgressSnapshot, UpdateStatusSnapshot } from '@shared/types'
@@ -12,6 +12,8 @@ let updateInfo: UpdateInfoSnapshot | undefined
 let downloadProgress: UpdateProgressSnapshot | undefined
 let lastError: string | undefined
 let isManual = false
+/** 下载取消令牌，下载期间存在，下载结束（完成/失败/取消）后置空 */
+let downloadCancellationToken: CancellationToken | null = null
 
 function sendToRenderer(channel: string, ...args: unknown[]): void {
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
@@ -167,11 +169,31 @@ export async function checkForUpdates(force = false): Promise<UpdateStatusSnapsh
 }
 
 export async function downloadUpdate(): Promise<void> {
+  downloadCancellationToken = new CancellationToken()
+  // 立即进入下载态并发出 0% 进度，避免渲染层在首个 download-progress 事件前没有进度条
+  downloadProgress = { bytesPerSecond: 0, percent: 0, total: 0, transferred: 0 }
+  currentStatus = 'downloading'
+  pushStatus()
   try {
-    await autoUpdater.downloadUpdate()
+    await autoUpdater.downloadUpdate(downloadCancellationToken)
   } catch (err) {
+    // 用户主动取消时 electron-updater 抛出 CancellationError，不视为错误，恢复到可下载状态
+    if (downloadCancellationToken?.cancelled) {
+      downloadProgress = undefined
+      setStatus(updateInfo ? 'available' : 'idle')
+      return
+    }
     lastError = err instanceof Error ? err.message : '下载更新失败'
     setStatus('error')
+  } finally {
+    downloadCancellationToken = null
+  }
+}
+
+/** 取消正在进行的下载，无下载进行时为空操作 */
+export function cancelDownloadUpdate(): void {
+  if (downloadCancellationToken && !downloadCancellationToken.cancelled) {
+    downloadCancellationToken.cancel()
   }
 }
 
