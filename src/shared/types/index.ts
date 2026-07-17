@@ -208,8 +208,8 @@ export interface AppSettings {
   cursorBlink: boolean
   /** 滚动缓冲行数 */
   scrollback: number
-  /** 终端渲染器：'webgl' 优先 WebGL 加速，失败回退 canvas；'canvas' 强制 canvas；'dom' 使用默认 DOM 渲染器 */
-  renderer: 'webgl' | 'canvas' | 'dom'
+  /** 终端渲染器：'webgl' 优先 WebGL 加速，失败回退 DOM；'dom' 使用默认 DOM 渲染器 */
+  renderer: 'webgl' | 'dom'
   logEnabled: boolean
   logPath: string
   logWithTimestamp: boolean
