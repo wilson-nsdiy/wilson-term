@@ -50,6 +50,9 @@ function buildEnv(): Record<string, string> {
   for (const [key, val] of Object.entries(process.env)) {
     if (val !== undefined) env[key] = val
   }
+  // xterm-256color 与 node-pty name 一致，TUI 程序（claude code / ink / vim）据此启用
+  // box-drawing 与高级布局；缺失时 Ink 会降级为无框紧凑输出。
+  env.TERM = 'xterm-256color'
   env.COLORTERM = 'truecolor'
   return env
 }
