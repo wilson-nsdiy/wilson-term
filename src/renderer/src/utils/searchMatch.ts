@@ -28,21 +28,26 @@ export interface SearchMatchInfo {
  * buffer line 的最小可用接口，便于单测时 stub。
  */
 interface StringOffsetLine {
-  getCell(x: number): { getWidth(): number } | undefined
+  getCell(x: number): { getWidth(): number; getChars(): string } | undefined
   length: number
 }
 
 /**
  * 把"段内字符串偏移"转换为该段的 buffer 列坐标。
  *
- * `translateToString(true)` 的输出有一个重要性质：它为每个非零宽度 cell 产出
- * 一个字符（宽字符 cell 只产出 1 个字符，宽度为 0 的跟随 cell 不产出字符），
- * 因此字符串索引等于"跳过所有宽度为 0 的跟随 cell 后的非零宽度 cell 计数"。
+ * 必须与 xterm SearchAddon 的 `_stringLengthToBufferSize` 算法保持一致，
+ * 否则自管理高亮的 registerDecoration(x) 会与 SearchAddon 选中位置
+ * （selection.start.x）错位，表现为同一匹配出现两个偏移的高亮。
  *
- * 反过来求 buffer 列：从列 0 开始遍历 cell，每遇到一个非零宽度的 cell 就把
- * 字符串指针前进一步；当字符串指针到达目标偏移时，当前累计的列就是 buffer 列。
- * 宽度为 2 的 cell 在 buffer 中占两列，但字符串中只占 1 个字符，所以需要按
- * cell 宽度累计列数；宽度为 0 的跟随 cell 占一列、不消耗字符串字符。
+ * 算法语义：遍历 buffer cell（i 即 buffer 列），循环到 i >= offset 退出；
+ * 循环内修改 offset——
+ *   - 多码点字符（emoji 等，getChars().length > 1）：offset -= len - 1，
+ *     把字符串多算的字符数扣回，使 offset 仍代表"字符串字符数"。
+ *   - 当前 cell 后跟一个 width=0 的跟随 cell（CJK 宽字符尾部）：
+ *     offset++，让循环多跑一次跳过跟随 cell。
+ *
+ * 跟随 cell 自身不显式处理：它在循环 i++ 时被自然跳过，且其 getChars()
+ * 返回 "" 不会触发 emoji 调整。
  *
  * @param line   该段的 buffer line 对象
  * @param strIdx 该段 translateToString 输出中的字符偏移
@@ -55,22 +60,20 @@ function stringIndexToBufferCol(
   maxCells: number
 ): number {
   if (!line) return strIdx
-  let col = 0
-  let consumed = 0
-  for (let x = 0; x < maxCells && consumed < strIdx; x++) {
-    const cell = line.getCell(x)
+  let offset = strIdx
+  for (let i = 0; i < offset && i < maxCells; i++) {
+    const cell = line.getCell(i)
     if (!cell) break
-    const w = cell.getWidth()
-    if (w === 0) {
-      // 跟随 cell：占一列，不消耗字符串字符
-      col++
-    } else {
-      // 非零宽度 cell：消耗一个字符串字符，占用 w 列
-      consumed++
-      col += w
+    const char = cell.getChars()
+    if (char.length > 1) {
+      offset -= char.length - 1
+    }
+    const nextCell = line.getCell(i + 1)
+    if (nextCell && nextCell.getWidth() === 0) {
+      offset++
     }
   }
-  return col
+  return offset
 }
 
 /**
