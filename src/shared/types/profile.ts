@@ -26,7 +26,7 @@ export interface ProfileOverrides {
   cursorBlink?: boolean
   scrollback?: number
   /** 终端渲染器（可在 Profile/Session 级别覆盖） */
-  renderer?: 'webgl' | 'canvas' | 'dom'
+  renderer?: 'webgl' | 'dom'
   logEnabled?: boolean
   logPath?: string
   logWithTimestamp?: boolean

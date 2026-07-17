@@ -1,6 +1,6 @@
 {
   "name": "wilson-terminal",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Wilson 的 SSH / Telnet / 串口模拟终端",
   "author": {
     "name": "Wilson",
@@ -14,25 +14,23 @@
     "package": "electron-vite build && electron-builder",
     "package:beta": "node scripts/package-beta.js",
     "lint": "eslint . --ext .ts,.tsx",
-    "typecheck": "tsc --noEmit",
-    "postinstall": "node scripts/patch-xterm.js"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
-    "@xterm/addon-canvas": "^0.7.0",
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/addon-search": "^0.15.0",
-    "@xterm/addon-unicode11": "^0.9.0",
-    "@xterm/addon-web-links": "^0.11.0",
-    "@xterm/addon-webgl": "^0.18.0",
-    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.12.0-beta.288",
+    "@xterm/addon-search": "^0.17.0-beta.288",
+    "@xterm/addon-unicode11": "^0.10.0-beta.288",
+    "@xterm/addon-web-links": "^0.13.0-beta.288",
+    "@xterm/addon-webgl": "^0.20.0-beta.287",
+    "@xterm/xterm": "^6.1.0-beta.288",
     "adm-zip": "^0.5.17",
     "electron-log": "^5.2.4",
     "electron-store": "^10.0.0",
     "electron-updater": "^6.8.9",
     "font-list": "^2.1.0",
     "koffi": "^3.0.2",
-    "node-pty": "^1.1.0",
+    "node-pty": "^1.2.0-beta.13",
     "serialport": "^12.0.0",
     "ssh2": "^1.16.0",
     "zustand": "^5.0.5"
