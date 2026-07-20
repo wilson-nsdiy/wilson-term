@@ -1,5 +1,4 @@
-import type { AppSettings, LogConfig } from '@shared/types'
-import type { Profile, ProfileOverrides } from '@shared/types/profile'
+import type { AppSettings, LogConfig, ProfileOverrides } from '@shared/types'
 
 /** 合并后的完整设置（所有字段都有值） */
 export interface ResolvedSettings {
@@ -24,21 +23,16 @@ export interface ResolvedSettings {
 }
 
 /**
- * 三层合并：全局默认 → Profile 覆盖 → Session 覆盖
+ * 两层合并：全局默认 → Session 覆盖
  * 仅非 undefined 的值覆盖前层
  */
 export function resolveSettings(
   global: AppSettings,
-  profile: Profile | undefined,
   sessionOverrides: Partial<ProfileOverrides> | undefined
 ): ResolvedSettings {
   const layers: Partial<ProfileOverrides>[] = []
 
   layers.push(globalToOverrides(global))
-
-  if (profile?.overrides) {
-    layers.push(profile.overrides)
-  }
 
   if (sessionOverrides) {
     layers.push(sessionOverrides)

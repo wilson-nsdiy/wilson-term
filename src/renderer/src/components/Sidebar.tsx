@@ -22,7 +22,6 @@ const Sidebar: React.FC = () => {
   const addSavedSession = useAppStore((state) => state.addSavedSession)
   const setActiveSession = useAppStore((state) => state.setActiveSession)
   const updateSessionStatus = useAppStore((state) => state.updateSessionStatus)
-  const updateSessionProfile = useAppStore((state) => state.updateSessionProfile)
   const writeSessionError = useAppStore((state) => state.writeSessionError)
   const updateSavedSession = useAppStore((state) => state.updateSavedSession)
   const removeSavedSession = useAppStore((state) => state.removeSavedSession)
@@ -194,8 +193,8 @@ const Sidebar: React.FC = () => {
   // 连接成功 -> 更新状态为 connected
   // 连接失败 -> 在终端中显示错误信息
 
-  /** 统一连接逻辑：创建 session → 连接 → 更新状态 → 处理定时任务/Profile */
-  const doConnect = async (config: ConnectionConfig, tasks?: ScheduledTask[], profileId?: string) => {
+  /** 统一连接逻辑：创建 session → 连接 → 更新状态 → 处理定时任务 */
+  const doConnect = async (config: ConnectionConfig, tasks?: ScheduledTask[]) => {
     const id = addSession(config)
     config.id = id
     setActiveSession(id)
@@ -204,7 +203,6 @@ const Sidebar: React.FC = () => {
       const resolvedLogConfig = resolveLogConfig(config.logConfig, useAppStore.getState().settings)
       await window.api.connection.connect(config, resolvedLogConfig)
       updateSessionStatus(id, 'connected')
-      if (profileId) updateSessionProfile(id, profileId)
       if (tasks && tasks.length > 0) {
         const { addScheduledTask } = useAppStore.getState()
         for (const task of tasks) addScheduledTask(id, { ...task, sessionId: id, enabled: false, executedCount: 0 })
@@ -215,13 +213,13 @@ const Sidebar: React.FC = () => {
     }
   }
 
-  const handleConnect = (config: ConnectionConfig, scheduledTasks?: ScheduledTask[], profileId?: string) => {
-    doConnect(config, scheduledTasks, profileId)
+  const handleConnect = (config: ConnectionConfig, scheduledTasks?: ScheduledTask[]) => {
+    doConnect(config, scheduledTasks)
   }
 
   const handleSavedSessionConnect = (saved: SavedSession) => {
     if (!saved.config) return
-    doConnect(saved.config, saved.scheduledTasks || [], saved.profileId)
+    doConnect(saved.config, saved.scheduledTasks || [])
   }
 
   const handleEditSavedSession = (saved: SavedSession) => {
@@ -235,23 +233,20 @@ const Sidebar: React.FC = () => {
     removeSavedSession(id)
   }
 
-  const handleConfigEdit = (config: ConnectionConfig, scheduledTasks?: ScheduledTask[], profileId?: string) => {
+  const handleConfigEdit = (config: ConnectionConfig, scheduledTasks?: ScheduledTask[]) => {
     if (editingSavedSessionId) {
-      updateSavedSession(editingSavedSessionId, { config, name: config.name, scheduledTasks: scheduledTasks || [], profileId })
+      updateSavedSession(editingSavedSessionId, { config, name: config.name, scheduledTasks: scheduledTasks || [] })
     }
     setEditingSavedSessionId(null)
     setEditingConfig(null)
   }
 
-  const handleSaveAndConnect = (config: ConnectionConfig, scheduledTasks?: ScheduledTask[], profileId?: string) => {
+  const handleSaveAndConnect = (config: ConnectionConfig, scheduledTasks?: ScheduledTask[]) => {
     const savedSessionId = addSavedSession(config, config.name)
-    const updates: Partial<SavedSession> = {}
-    if (scheduledTasks && scheduledTasks.length > 0) updates.scheduledTasks = scheduledTasks
-    if (profileId) updates.profileId = profileId
-    if (Object.keys(updates).length > 0) {
-      updateSavedSession(savedSessionId, updates)
+    if (scheduledTasks && scheduledTasks.length > 0) {
+      updateSavedSession(savedSessionId, { scheduledTasks })
     }
-    handleConnect(config, scheduledTasks, profileId)
+    handleConnect(config, scheduledTasks)
   }
 
   // ---- 右键菜单 ----

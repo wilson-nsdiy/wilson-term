@@ -54,9 +54,6 @@ const App: React.FC = () => {
       // 加载定时任务
       await useAppStore.getState().loadScheduledTasks()
 
-      // 加载 Profile 列表
-      await useAppStore.getState().loadProfiles()
-
       // 加载并激活插件
       await rendererPluginHost.loadFromMain()
       for (const [, entry] of rendererPluginHost.getAll()) {

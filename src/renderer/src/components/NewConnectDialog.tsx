@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import type { SSHConfig, SerialConfig, TelnetConfig, BashConfig, SSHAuthType, ConnectionConfig, SerialPortInfo, LogConfig, ScheduledTask, Profile, BashShellType, ShellInfo } from '@shared/types'
+import type { SSHConfig, SerialConfig, TelnetConfig, BashConfig, SSHAuthType, ConnectionConfig, SerialPortInfo, LogConfig, ScheduledTask, BashShellType, ShellInfo } from '@shared/types'
 import { useAppStore } from '../store'
 import { createLogConfigFromSettings } from '../utils/logConfig'
 import LogConfigSection from './LogConfigSection'
@@ -10,10 +10,10 @@ type TabType = 'ssh' | 'serial' | 'telnet' | 'bash'
 interface NewConnectDialogProps {
   open: boolean
   onClose: () => void
-  onConnect: (config: ConnectionConfig, scheduledTasks?: ScheduledTask[], profileId?: string) => void
+  onConnect: (config: ConnectionConfig, scheduledTasks?: ScheduledTask[]) => void
   editConfig?: ConnectionConfig | null
-  onEdit?: (config: ConnectionConfig, scheduledTasks?: ScheduledTask[], profileId?: string) => void
-  onSaveAndConnect?: (config: ConnectionConfig, scheduledTasks?: ScheduledTask[], profileId?: string) => void
+  onEdit?: (config: ConnectionConfig, scheduledTasks?: ScheduledTask[]) => void
+  onSaveAndConnect?: (config: ConnectionConfig, scheduledTasks?: ScheduledTask[]) => void
 }
 
 const BAUD_RATES = [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600]
@@ -77,10 +77,8 @@ const NewConnectDialog: React.FC<NewConnectDialogProps> = ({
   // 高级设置
   const settings = useAppStore((state) => state.settings)
   const savedSessions = useAppStore((state) => state.savedSessions)
-  const profiles = useAppStore((state) => state.profiles)
   const [logConfig, setLogConfig] = useState<LogConfig>(createLogConfigFromSettings(settings))
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([])
-  const [selectedProfileId, setSelectedProfileId] = useState<string>('')
 
   useEffect(() => {
     if (open && !settings.logPath) {
@@ -121,11 +119,9 @@ const NewConnectDialog: React.FC<NewConnectDialogProps> = ({
       setLogConfig(editConfig.logConfig ? { ...editConfig.logConfig } : createLogConfigFromSettings(settings))
       const saved = savedSessions.find((s) => s.config.id === editConfig.id)
       setScheduledTasks(saved?.scheduledTasks ? saved.scheduledTasks.map((t) => ({ ...t })) : [])
-      setSelectedProfileId(saved?.profileId ?? '')
     } else if (open && !editConfig) {
       setLogConfig(createLogConfigFromSettings(settings))
       setScheduledTasks([])
-      setSelectedProfileId('')
     }
   }, [open, editConfig, settings])
 
@@ -133,16 +129,6 @@ const NewConnectDialog: React.FC<NewConnectDialogProps> = ({
     if (open && activeTab === 'serial') listPorts()
     if (open && activeTab === 'bash') listShells()
   }, [open, activeTab])
-
-  // tab 切换时，若当前选中的 Profile 不再适用于新 tab，则重置
-  useEffect(() => {
-    if (selectedProfileId) {
-      const stillApplies = profiles.some(
-        (p) => p.id === selectedProfileId && (p.appliesTo.length === 0 || p.appliesTo.includes(activeTab))
-      )
-      if (!stillApplies) setSelectedProfileId('')
-    }
-  }, [activeTab, selectedProfileId, profiles])
 
   const listPorts = async () => {
     try {
@@ -242,9 +228,9 @@ const NewConnectDialog: React.FC<NewConnectDialogProps> = ({
 
   const submit = (config: ConnectionConfig) => {
     if (isEditMode && onEdit) {
-      onEdit(config, scheduledTasks, selectedProfileId || undefined)
+      onEdit(config, scheduledTasks)
     } else {
-      onConnect(config, scheduledTasks, selectedProfileId || undefined)
+      onConnect(config, scheduledTasks)
     }
   }
 
@@ -256,7 +242,7 @@ const NewConnectDialog: React.FC<NewConnectDialogProps> = ({
 
   const handleSaveAndConnect = () => {
     if (!validate()) return
-    onSaveAndConnect?.(buildConfig(''), scheduledTasks, selectedProfileId || undefined)
+    onSaveAndConnect?.(buildConfig(''), scheduledTasks)
     handleClose()
   }
 
@@ -267,7 +253,6 @@ const NewConnectDialog: React.FC<NewConnectDialogProps> = ({
     setBashName(''); setBashShell('auto'); setBashCwd('')
     setLogConfig(createLogConfigFromSettings(useAppStore.getState().settings))
     setScheduledTasks([])
-    setSelectedProfileId('')
     setLogExpanded(false)
     setTasksExpanded(false)
     setActiveTab('ssh')

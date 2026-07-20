@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TerminalSession, AppSettings, ConnectionConfig, SavedSession, SavedSessionGroup, CommandButtonGroup, ViewState, KeyboardLockState, ScheduledTask, Profile, ProfileOverrides } from '@shared/types'
+import type { TerminalSession, AppSettings, ConnectionConfig, SavedSession, SavedSessionGroup, CommandButtonGroup, ViewState, KeyboardLockState, ScheduledTask, ProfileOverrides } from '@shared/types'
 import { createLogConfigFromSettings, resolveLogConfig } from '../utils/logConfig'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 
@@ -62,10 +62,6 @@ interface AppState {
   /** 定时任务对话框是否打开 */
   scheduledTaskDialogOpen: boolean
 
-  // Profile 管理
-  /** Profile 列表 */
-  profiles: Profile[]
-
   // Actions - 活跃会话
   setActiveSession: (id: string | null) => void
   setNewConnectDialogOpen: (open: boolean) => void
@@ -77,12 +73,10 @@ interface AppState {
   writeSessionError: (id: string, message: string) => void
   /** 拖拽移动标签页顺序 */
   moveSessionTab: (fromIndex: number, toIndex: number) => void
-  /** 更新会话关联的 Profile ID */
-  updateSessionProfile: (id: string, profileId: string) => void
 
   // Actions - 保存的会话模板
   addSavedSession: (config: ConnectionConfig, name?: string, groupId?: string) => string
-  updateSavedSession: (id: string, updates: Partial<Pick<SavedSession, 'name' | 'config' | 'scheduledTasks' | 'profileId' | 'groupId' | 'order'>>) => void
+  updateSavedSession: (id: string, updates: Partial<Pick<SavedSession, 'name' | 'config' | 'scheduledTasks' | 'groupId' | 'order'>>) => void
   removeSavedSession: (id: string) => void
   /** 拖拽移动保存的会话顺序 */
   moveSavedSession: (fromIndex: number, toIndex: number) => void
@@ -158,13 +152,6 @@ interface AppState {
   removeSessionTasks: (sessionId: string) => void
   loadScheduledTasks: () => Promise<void>
   persistScheduledTasks: () => Promise<void>
-
-  // Profile Actions
-  loadProfiles: () => Promise<void>
-  persistProfiles: () => Promise<void>
-  addProfile: (name: string, appliesTo: ConnectionType[], overrides: Partial<ProfileOverrides>) => string
-  updateProfile: (id: string, updates: Partial<Pick<Profile, 'name' | 'appliesTo' | 'overrides'>>) => void
-  removeProfile: (id: string) => void
 }
 
 /** 生成唯一 ID */
@@ -226,7 +213,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   searchVisible: false,
   scheduledTasks: {},
   scheduledTaskDialogOpen: false,
-  profiles: [],
 
   // ---- 活跃会话 Actions ----
 
@@ -294,13 +280,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       sessions.splice(toIndex, 0, moved)
       return { sessions }
     }),
-
-  updateSessionProfile: (id, profileId) =>
-    set((state) => ({
-      sessions: state.sessions.map((s) =>
-        s.id === id ? { ...s, profileId } : s
-      )
-    })),
 
   // ---- 保存的会话模板 Actions ----
 
@@ -926,54 +905,5 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (err) {
       console.error('保存应用设置失败:', err)
     }
-  },
-
-  // ---- Profile Actions ----
-
-  loadProfiles: async () => {
-    try {
-      const profiles = await window.api.storage.loadProfiles()
-      // 迁移：xterm 6.x 已废弃 Canvas addon，旧 Profile overrides 中的 'canvas' 规整为 'dom'
-      for (const p of profiles) {
-        if ((p.overrides as { renderer?: string } | undefined)?.renderer === 'canvas') {
-          p.overrides!.renderer = 'dom'
-        }
-      }
-      set({ profiles })
-    } catch (err) {
-      console.error('加载 Profile 失败:', err)
-    }
-  },
-
-  persistProfiles: async () => {
-    try {
-      const { profiles } = get()
-      await window.api.storage.saveProfiles(profiles)
-    } catch (err) {
-      console.error('保存 Profile 失败:', err)
-    }
-  },
-
-  addProfile: (name, appliesTo, overrides) => {
-    const id = generateId()
-    const now = Date.now()
-    const profile: Profile = { id, name, appliesTo, overrides, createdAt: now, updatedAt: now }
-    set((state) => ({ profiles: [...state.profiles, profile] }))
-    get().persistProfiles()
-    return id
-  },
-
-  updateProfile: (id, updates) => {
-    set((state) => ({
-      profiles: state.profiles.map((p) =>
-        p.id === id ? { ...p, ...updates, updatedAt: Date.now() } : p
-      )
-    }))
-    get().persistProfiles()
-  },
-
-  removeProfile: (id) => {
-    set((state) => ({ profiles: state.profiles.filter((p) => p.id !== id) }))
-    get().persistProfiles()
   }
 }))

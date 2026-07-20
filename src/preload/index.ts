@@ -105,9 +105,7 @@ const api = {
     loadViewState: () => ipcRenderer.invoke('storage:load-view-state'),
     saveViewState: (state: unknown) => ipcRenderer.invoke('storage:save-view-state', state),
     loadScheduledTasks: () => ipcRenderer.invoke('storage:load-scheduled-tasks'),
-    saveScheduledTasks: (tasks: unknown) => ipcRenderer.invoke('storage:save-scheduled-tasks', tasks),
-    loadProfiles: () => ipcRenderer.invoke('storage:load-profiles'),
-    saveProfiles: (profiles: unknown) => ipcRenderer.invoke('storage:save-profiles', profiles)
+    saveScheduledTasks: (tasks: unknown) => ipcRenderer.invoke('storage:save-scheduled-tasks', tasks)
   },
 
   // 键盘状态
