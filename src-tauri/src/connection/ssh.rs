@@ -266,6 +266,7 @@ struct ClientHandler {
 impl client::Handler for ClientHandler {
     type Error = anyhow::Error;
 
+    #[allow(refining_impl_trait_internal)]
     fn check_server_key(
         &mut self,
         server_public_key: &SshKeyPublicKey,
@@ -426,7 +427,7 @@ impl SshConnection {
         }
 
         // 打开 shell channel
-        let mut channel = handle
+        let channel = handle
             .channel_open_session()
             .await
             .map_err(|e| anyhow!("创建 shell 失败: {}", e))?;
@@ -687,7 +688,7 @@ impl SshConnection {
         let handle = handle_guard
             .as_ref()
             .ok_or_else(|| anyhow!("SSH 连接已断开"))?;
-        let mut channel = handle
+        let channel = handle
             .channel_open_session()
             .await
             .map_err(|e| anyhow!("打开 SFTP channel 失败: {}", e))?;

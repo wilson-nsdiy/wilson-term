@@ -257,7 +257,6 @@ impl BashConnection {
             let mut guard = self.child.lock().await;
             if let Some(mut child) = guard.take() {
                 // Child 也实现了 ChildKiller
-                use portable_pty::ChildKiller;
                 let mut killer = child.clone_killer();
                 let _ = killer.kill();
                 // 回收子进程避免僵尸进程:

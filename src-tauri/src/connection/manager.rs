@@ -5,9 +5,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use once_cell::sync::Lazy;
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use tauri::Emitter;
-use tokio::sync::RwLock;
 
 use crate::types::{ConnectionConfig, ConnectionType, LogConfig, SessionStatus};
 
@@ -35,7 +34,7 @@ impl Default for ManagerState {
     }
 }
 
-static MANAGER_STATE: Lazy<Mutex<ManagerState>> = Lazy::new(|| Mutex::new(ManagerState::default()));
+static MANAGER_STATE: Lazy<ManagerState> = Lazy::new(ManagerState::default);
 
 /// 初始化连接管理器
 pub fn ensure_init() {
@@ -79,10 +78,7 @@ pub async fn create(
                 _ => unreachable!(),
             };
             let conn = Arc::new(SshConnection::new(session_id.clone(), ssh_config));
-            {
-                let state = MANAGER_STATE.lock();
-                state.ssh.blocking_write().insert(session_id.clone(), conn.clone());
-            }
+            MANAGER_STATE.ssh.write().insert(session_id.clone(), conn.clone());
             let callbacks = Arc::new(GlobalSshCallbacks { app: app.clone() });
             conn.connect(callbacks, on_data, on_status).await?;
         }
@@ -92,10 +88,7 @@ pub async fn create(
                 _ => unreachable!(),
             };
             let conn = Arc::new(TelnetConnection::new(session_id.clone(), telnet_config));
-            {
-                let state = MANAGER_STATE.lock();
-                state.telnet.blocking_write().insert(session_id.clone(), conn.clone());
-            }
+            MANAGER_STATE.telnet.write().insert(session_id.clone(), conn.clone());
             let on_data_boxed: Box<dyn Fn(String, String) + Send + Sync> = {
                 let on_data = on_data.clone();
                 Box::new(move |s, d| on_data(s, d))
@@ -112,10 +105,7 @@ pub async fn create(
                 _ => unreachable!(),
             };
             let conn = Arc::new(SerialConnection::new(session_id.clone(), serial_config));
-            {
-                let state = MANAGER_STATE.lock();
-                state.serial.blocking_write().insert(session_id.clone(), conn.clone());
-            }
+            MANAGER_STATE.serial.write().insert(session_id.clone(), conn.clone());
             let on_data_boxed: Box<dyn Fn(String, String) + Send + Sync> = {
                 let on_data = on_data.clone();
                 Box::new(move |s, d| on_data(s, d))
@@ -132,10 +122,7 @@ pub async fn create(
                 _ => unreachable!(),
             };
             let conn = Arc::new(BashConnection::new(session_id.clone(), bash_config));
-            {
-                let state = MANAGER_STATE.lock();
-                state.bash.blocking_write().insert(session_id.clone(), conn.clone());
-            }
+            MANAGER_STATE.bash.write().insert(session_id.clone(), conn.clone());
             let on_data_boxed: Box<dyn Fn(String, String) + Send + Sync> = {
                 let on_data = on_data.clone();
                 Box::new(move |s, d| on_data(s, d))
@@ -155,8 +142,7 @@ pub async fn create(
 pub async fn remove(session_id: &str) -> Result<(), anyhow::Error> {
     // 依次从各类型注册表移除,找到即断开
     let ssh_conn: Option<Arc<SshConnection>> = {
-        let mut state = MANAGER_STATE.lock();
-        state.ssh.get_mut().remove(session_id)
+        MANAGER_STATE.ssh.write().remove(session_id)
     };
     if let Some(conn) = ssh_conn {
         let _ = conn.disconnect().await;
@@ -164,8 +150,7 @@ pub async fn remove(session_id: &str) -> Result<(), anyhow::Error> {
         return Ok(());
     }
     let telnet_conn: Option<Arc<TelnetConnection>> = {
-        let mut state = MANAGER_STATE.lock();
-        state.telnet.get_mut().remove(session_id)
+        MANAGER_STATE.telnet.write().remove(session_id)
     };
     if let Some(conn) = telnet_conn {
         let _ = conn.disconnect().await;
@@ -173,8 +158,7 @@ pub async fn remove(session_id: &str) -> Result<(), anyhow::Error> {
         return Ok(());
     }
     let serial_conn: Option<Arc<SerialConnection>> = {
-        let mut state = MANAGER_STATE.lock();
-        state.serial.get_mut().remove(session_id)
+        MANAGER_STATE.serial.write().remove(session_id)
     };
     if let Some(conn) = serial_conn {
         let _ = conn.disconnect().await;
@@ -182,8 +166,7 @@ pub async fn remove(session_id: &str) -> Result<(), anyhow::Error> {
         return Ok(());
     }
     let bash_conn: Option<Arc<BashConnection>> = {
-        let mut state = MANAGER_STATE.lock();
-        state.bash.get_mut().remove(session_id)
+        MANAGER_STATE.bash.write().remove(session_id)
     };
     if let Some(conn) = bash_conn {
         let _ = conn.disconnect().await;
@@ -197,8 +180,7 @@ pub async fn remove(session_id: &str) -> Result<(), anyhow::Error> {
 pub async fn write(session_id: &str, data: &str) -> Result<(), anyhow::Error> {
     // SSH
     let conn: Option<Arc<SshConnection>> = {
-        let mutex = MANAGER_STATE.lock();
-        let guard = mutex.ssh.blocking_read();
+        let guard = MANAGER_STATE.ssh.read();
         guard.get(session_id).cloned()
     };
     if let Some(conn) = conn {
@@ -206,8 +188,7 @@ pub async fn write(session_id: &str, data: &str) -> Result<(), anyhow::Error> {
     }
     // Telnet
     let conn: Option<Arc<TelnetConnection>> = {
-        let mutex = MANAGER_STATE.lock();
-        let guard = mutex.telnet.blocking_read();
+        let guard = MANAGER_STATE.telnet.read();
         guard.get(session_id).cloned()
     };
     if let Some(conn) = conn {
@@ -215,8 +196,7 @@ pub async fn write(session_id: &str, data: &str) -> Result<(), anyhow::Error> {
     }
     // Serial
     let conn: Option<Arc<SerialConnection>> = {
-        let mutex = MANAGER_STATE.lock();
-        let guard = mutex.serial.blocking_read();
+        let guard = MANAGER_STATE.serial.read();
         guard.get(session_id).cloned()
     };
     if let Some(conn) = conn {
@@ -224,8 +204,7 @@ pub async fn write(session_id: &str, data: &str) -> Result<(), anyhow::Error> {
     }
     // Bash
     let conn: Option<Arc<BashConnection>> = {
-        let mutex = MANAGER_STATE.lock();
-        let guard = mutex.bash.blocking_read();
+        let guard = MANAGER_STATE.bash.read();
         guard.get(session_id).cloned()
     };
     if let Some(conn) = conn {
@@ -237,24 +216,21 @@ pub async fn write(session_id: &str, data: &str) -> Result<(), anyhow::Error> {
 /// 调整终端尺寸
 pub async fn resize(session_id: &str, cols: u32, rows: u32) -> Result<(), anyhow::Error> {
     let conn: Option<Arc<SshConnection>> = {
-        let mutex = MANAGER_STATE.lock();
-        let guard = mutex.ssh.blocking_read();
+        let guard = MANAGER_STATE.ssh.read();
         guard.get(session_id).cloned()
     };
     if let Some(conn) = conn {
         return conn.resize(cols, rows).await;
     }
     let conn: Option<Arc<TelnetConnection>> = {
-        let mutex = MANAGER_STATE.lock();
-        let guard = mutex.telnet.blocking_read();
+        let guard = MANAGER_STATE.telnet.read();
         guard.get(session_id).cloned()
     };
     if let Some(conn) = conn {
         return conn.resize(cols as u16, rows as u16).await;
     }
     let conn: Option<Arc<SerialConnection>> = {
-        let mutex = MANAGER_STATE.lock();
-        let guard = mutex.serial.blocking_read();
+        let guard = MANAGER_STATE.serial.read();
         guard.get(session_id).cloned()
     };
     if let Some(_conn) = conn {
@@ -262,8 +238,7 @@ pub async fn resize(session_id: &str, cols: u32, rows: u32) -> Result<(), anyhow
         return Ok(());
     }
     let conn: Option<Arc<BashConnection>> = {
-        let mutex = MANAGER_STATE.lock();
-        let guard = mutex.bash.blocking_read();
+        let guard = MANAGER_STATE.bash.read();
         guard.get(session_id).cloned()
     };
     if let Some(conn) = conn {
@@ -274,7 +249,29 @@ pub async fn resize(session_id: &str, cols: u32, rows: u32) -> Result<(), anyhow
 
 /// 获取指定会话的 SSH 连接（供 SFTP 模块使用）
 pub fn get_ssh_connection(session_id: &str) -> Option<Arc<SshConnection>> {
-    let mutex = MANAGER_STATE.lock();
-    let guard = mutex.ssh.blocking_read();
+    let guard = MANAGER_STATE.ssh.read();
     guard.get(session_id).cloned()
+}
+
+/// 获取所有活跃会话 ID（跨所有连接类型）
+/// 供插件系统在插件启用时向现有会话派发 notifySessionCreated。
+pub fn get_session_ids() -> Vec<String> {
+    let mut ids = Vec::new();
+    {
+        let guard = MANAGER_STATE.ssh.read();
+        ids.extend(guard.keys().cloned());
+    }
+    {
+        let guard = MANAGER_STATE.telnet.read();
+        ids.extend(guard.keys().cloned());
+    }
+    {
+        let guard = MANAGER_STATE.serial.read();
+        ids.extend(guard.keys().cloned());
+    }
+    {
+        let guard = MANAGER_STATE.bash.read();
+        ids.extend(guard.keys().cloned());
+    }
+    ids
 }
