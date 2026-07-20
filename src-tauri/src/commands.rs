@@ -12,6 +12,7 @@ use crate::connection::{
 };
 use crate::keyboard::get_keyboard_lock_state;
 use crate::logger;
+use crate::plugin_host;
 use crate::sftp;
 use crate::storage;
 use crate::types::*;
@@ -288,8 +289,66 @@ pub async fn log_get_dir(session_id: String) -> Option<String> {
 
 #[tauri::command]
 pub async fn shell_open_external(app: AppHandle, url: String) -> Result<(), String> {
+    // tauri-plugin-shell 的 open 已废弃,官方推荐 tauri-plugin-opener。
+    // 前端 api.ts 仍用 @tauri-apps/plugin-shell 的 open 打开日志文件/目录,
+    // 待前端一并迁移到 opener 后,此处可改用 tauri_plugin_opener::open_url。
     use tauri_plugin_shell::ShellExt;
+    #[allow(deprecated)]
     app.shell().open(url, None).map_err(|e| e.to_string())
+}
+
+// ========== 插件命令 ==========
+// 对应前端 window.api.plugin.* 的 8 个 invoke
+// 底层逻辑在 plugin_host.rs(导入/导出/注册表/渲染代码)与 connection::manager(write/sessions)
+
+#[tauri::command]
+pub fn plugin_list() -> Vec<plugin_host::PluginListItem> {
+    plugin_host::list_plugins()
+}
+
+#[tauri::command]
+pub fn plugin_toggle(id: String, enabled: bool) -> bool {
+    plugin_host::toggle_plugin(&id, enabled)
+}
+
+#[tauri::command]
+pub fn plugin_import_zip(zip_path: Option<String>) -> plugin_host::PluginImportResult {
+    // 前端未传路径时返回失败,引导用户通过对话框选择
+    match zip_path {
+        Some(p) if !p.is_empty() => plugin_host::import_plugin(&p),
+        _ => plugin_host::PluginImportResult {
+            success: false,
+            plugin_id: None,
+            error: Some("未提供插件 ZIP 路径".into()),
+        },
+    }
+}
+
+#[tauri::command]
+pub fn plugin_export_zip(id: String) -> plugin_host::PluginExportResult {
+    plugin_host::export_plugin(&id)
+}
+
+#[tauri::command]
+pub fn plugin_uninstall(id: String) -> bool {
+    plugin_host::uninstall_plugin(&id)
+}
+
+#[tauri::command]
+pub fn plugin_get_renderer_code(id: String) -> Option<String> {
+    plugin_host::get_renderer_code(&id)
+}
+
+/// 插件向终端会话写入数据(主进程统一出口,支持所有连接类型)
+#[tauri::command]
+pub async fn plugin_write(session_id: String, data: String) -> Result<(), String> {
+    manager::write(&session_id, &data).await.map_err(|e| e.to_string())
+}
+
+/// 获取所有活跃会话 ID(插件启用时向现有会话派发 notifySessionCreated 用)
+#[tauri::command]
+pub fn plugin_get_sessions() -> Vec<String> {
+    manager::get_session_ids()
 }
 
 // ========== 全局事件派发回调 ==========
@@ -363,5 +422,13 @@ pub fn register_all() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         log_get_file_path,
         log_get_dir,
         shell_open_external,
+        plugin_list,
+        plugin_toggle,
+        plugin_import_zip,
+        plugin_export_zip,
+        plugin_uninstall,
+        plugin_get_renderer_code,
+        plugin_write,
+        plugin_get_sessions,
     ]
 }
