@@ -4,14 +4,14 @@ import { readFileSync } from 'fs'
 import { networkInterfaces } from 'os'
 import { registerConnectionHandlers, registerSSHSpecificHandlers, registerSerialSpecificHandlers, registerBashSpecificHandlers, getActiveClientsMap, connectionManager } from './connection/ipc'
 import { registerSFTPHandlers, setActiveConnectionsGetter } from './sftp'
-import { loadSavedSessionsFromDisk, saveSavedSessionsToDisk, loadCommandButtonGroupsFromDisk, saveCommandButtonGroupsToDisk, loadAppSettingsFromDisk, saveAppSettingsToDisk, loadViewStateFromDisk, saveViewStateToDisk, loadScheduledTasksFromDisk, saveScheduledTasksToDisk, loadSavedSessionGroupsFromDisk, saveSavedSessionGroupsToDisk } from './storage'
+import { loadSavedSessionsFromDisk, saveSavedSessionsToDisk, loadCommandButtonGroupsFromDisk, saveCommandButtonGroupsToDisk, loadAppSettingsFromDisk, saveAppSettingsToDisk, loadViewStateFromDisk, saveViewStateToDisk, loadScheduledTasksFromDisk, saveScheduledTasksToDisk, loadProfilesFromDisk, saveProfilesToDisk, loadSavedSessionGroupsFromDisk, saveSavedSessionGroupsToDisk } from './storage'
 import { logManager } from './logger'
 import { appLogger } from './app-logger'
 import { checkForUpdates, getCurrentVersion, downloadUpdate, quitAndInstall, getStatus, getIgnoredVersions, saveIgnoredVersions, cancelDownloadUpdate } from './updater'
 import { getKeyboardLockState } from './keyboard'
 import { getComputerDomain } from './domain'
 import { mainPluginHost } from './plugin-host'
-import type { SavedSession, LogConfig, ConnectionConfig, CommandButtonGroup, AppSettings, ScheduledTask, SavedSessionGroup } from '@shared/types'
+import type { SavedSession, LogConfig, ConnectionConfig, CommandButtonGroup, AppSettings, ScheduledTask, Profile, SavedSessionGroup } from '@shared/types'
 import type { ViewState } from './storage'
 
 async function getSystemFonts(): Promise<string[]> {
@@ -240,6 +240,15 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('storage:save-scheduled-tasks', async (_event, tasks: Record<string, ScheduledTask[]>) => {
     await saveScheduledTasksToDisk(tasks)
+  })
+
+  // 存储：Profile 列表
+  ipcMain.handle('storage:load-profiles', () => {
+    return loadProfilesFromDisk()
+  })
+
+  ipcMain.handle('storage:save-profiles', async (_event, profiles: Profile[]) => {
+    await saveProfilesToDisk(profiles)
   })
 
   // 存储：会话分组

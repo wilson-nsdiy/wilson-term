@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { readFileSync, existsSync } from 'fs'
 import { promises as fsPromises } from 'fs'
 import { join, dirname } from 'path'
-import type { SavedSession, CommandButtonGroup, AppSettings, ScheduledTask, SavedSessionGroup } from '@shared/types'
+import type { SavedSession, CommandButtonGroup, AppSettings, ScheduledTask, Profile, SavedSessionGroup } from '@shared/types'
 
 /** 视图状态（需要持久化的 UI 开关） */
 export interface ViewState {
@@ -182,6 +182,25 @@ export function loadScheduledTasksFromDisk(): Record<string, ScheduledTask[]> {
 /** 将定时任务写入磁盘 */
 export async function saveScheduledTasksToDisk(tasks: Record<string, ScheduledTask[]>): Promise<void> {
   await writeJsonFile('scheduled-tasks.json', tasks)
+}
+
+/** 从磁盘加载 Profile 列表 */
+export function loadProfilesFromDisk(): Profile[] {
+  const filePath = getStoragePath('profiles.json')
+  if (!existsSync(filePath)) {
+    return []
+  }
+  try {
+    const data = readFileSync(filePath, 'utf-8')
+    return JSON.parse(data) as Profile[]
+  } catch {
+    return []
+  }
+}
+
+/** 将 Profile 列表写入磁盘 */
+export async function saveProfilesToDisk(profiles: Profile[]): Promise<void> {
+  await writeJsonFile('profiles.json', profiles)
 }
 
 /** 从磁盘加载上次自动检查更新的时间戳 */

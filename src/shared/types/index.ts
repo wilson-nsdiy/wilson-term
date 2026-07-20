@@ -1,8 +1,8 @@
 /** 连接类型 */
 export type ConnectionType = 'ssh' | 'serial' | 'telnet' | 'bash'
 
-import type { ProfileOverrides } from './profile'
-export type { ProfileOverrides }
+import type { Profile, ProfileOverrides } from './profile'
+export type { Profile, ProfileOverrides }
 export type { PluginPermission, PluginManifest, PluginRegistryEntry, PluginStatusBarItem, PluginContext, PluginLifecycle, MainPlugin, RendererPlugin, PluginDefinition, PluginImportResult, PluginExportResult, PluginListItem, PluginAPI } from './plugin'
 
 /** 键盘锁状态 */
@@ -99,6 +99,10 @@ export interface SavedSession {
   id: string
   name: string
   config: ConnectionConfig
+  /** 继承的 Profile ID */
+  profileId?: string
+  /** 会话级增量覆盖 */
+  overrides?: Partial<ProfileOverrides>
   /** 预设的定时任务列表（连接后自动创建到会话） */
   scheduledTasks: ScheduledTask[]
   /** 所属分组 ID，undefined 表示未分组 */
@@ -137,6 +141,8 @@ export type SessionStatus = 'connecting' | 'connected' | 'disconnected' | 'error
 export interface TerminalSession {
   id: string
   config: ConnectionConfig
+  profileId?: string
+  overrides?: Partial<ProfileOverrides>
   status: SessionStatus
   /** 连接错误信息（仅在 status 为 error 时有值） */
   errorMessage?: string
@@ -249,6 +255,8 @@ export interface StorageAPI {
   saveViewState: (state: ViewState) => Promise<void>
   loadScheduledTasks: () => Promise<Record<string, ScheduledTask[]>>
   saveScheduledTasks: (tasks: Record<string, ScheduledTask[]>) => Promise<void>
+  loadProfiles: () => Promise<Profile[]>
+  saveProfiles: (profiles: Profile[]) => Promise<void>
 }
 
 /** 视图状态（需要持久化的 UI 开关） */

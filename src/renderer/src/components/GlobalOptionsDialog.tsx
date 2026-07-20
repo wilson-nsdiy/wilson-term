@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAppStore } from '../store'
 import type { AppSettings } from '@shared/types'
+import ProfileManager from './ProfileManager'
 
 interface GlobalOptionsDialogProps {
   open: boolean
@@ -25,13 +26,14 @@ const CURSOR_STYLE_OPTIONS = [
   { value: 'bar', label: '竖线' }
 ]
 
-type TabKey = 'appearance' | 'cursor' | 'scroll' | 'mouse'
+type TabKey = 'appearance' | 'cursor' | 'scroll' | 'mouse' | 'profiles'
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'appearance', label: '外观' },
   { key: 'cursor', label: '光标' },
   { key: 'scroll', label: '滚动' },
-  { key: 'mouse', label: '鼠标/粘贴' }
+  { key: 'mouse', label: '鼠标/粘贴' },
+  { key: 'profiles', label: '配置模板' }
 ]
 
 const DEFAULT_FORM = {
@@ -584,6 +586,10 @@ const GlobalOptionsDialog: React.FC<GlobalOptionsDialogProps> = ({ open, onClose
               </div>
             )}
 
+            {/* 配置模板 */}
+            {activeTab === 'profiles' && (
+              <ProfileManager open={open} onClose={onClose} embedded />
+            )}
           </div>
         </div>
 

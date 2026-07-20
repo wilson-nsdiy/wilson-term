@@ -88,6 +88,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   const rightClickPasteRef = useRef(useAppStore.getState().settings.rightClickPaste)
 
   const settings = useAppStore((state) => state.settings)
+  const profiles = useAppStore((state) => state.profiles)
   const updateSessionStatus = useAppStore((state) => state.updateSessionStatus)
   const updateKeyboardLockState = useAppStore((state) => state.updateKeyboardLockState)
   const { commandInputVisible, buttonBarVisible, statusBarVisible, sidebarOpen } = useAppStore(
@@ -98,19 +99,23 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       sidebarOpen: state.sidebarOpen
     }))
   )
-  const { sessionStatus, sessionErrorMessage, sessionConfig, sessionOverrides } = useAppStore(
+  const { sessionStatus, sessionErrorMessage, sessionConfig, sessionProfileId, sessionOverrides } = useAppStore(
     useShallow((state) => {
       const s = state.sessions.find((s) => s.id === sessionId)
       return {
         sessionStatus: s?.status,
         sessionErrorMessage: s?.errorMessage,
         sessionConfig: s?.config,
+        sessionProfileId: s?.profileId,
         sessionOverrides: s?.overrides
       }
     })
   )
 
-  const resolved = resolveSettings(settings, sessionOverrides)
+  const profile = useAppStore((state) =>
+    sessionProfileId ? state.profiles.find((p) => p.id === sessionProfileId) : undefined
+  )
+  const resolved = resolveSettings(settings, profile, sessionOverrides)
 
   /** 写入状态提示横幅；pinnedScroll 不可用时兜底直接写入 xterm 并滚到底部，避免提示静默丢失 */
   const writeBanner = useCallback((text: string) => {
@@ -593,7 +598,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   useEffect(() => {
     const xterm = xtermRef.current
     if (!xterm) return
-    const r = resolveSettings(settings, sessionOverrides)
+    const r = resolveSettings(settings, profile, sessionOverrides)
     xterm.options.fontSize = r.fontSize
     xterm.options.fontFamily = buildFontFamily(r.fontFamily)
     xterm.options.fontWeight = r.fontWeight as any
@@ -613,7 +618,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     } else {
       fit()
     }
-  }, [settings.fontSize, settings.fontFamily, settings.fontWeight, settings.fontWeightBold, settings.lineHeight, settings.letterSpacing, settings.cursorStyle, settings.cursorBlink, settings.scrollback, settings.background, settings.foreground, sessionOverrides])
+  }, [settings.fontSize, settings.fontFamily, settings.fontWeight, settings.fontWeightBold, settings.lineHeight, settings.letterSpacing, settings.cursorStyle, settings.cursorBlink, settings.scrollback, settings.background, settings.foreground, sessionProfileId, sessionOverrides, profiles])
 
   // 性能监控：定期检查背压与渲染器状态（基于两次采样间的增量，避免累计值反复刷日志）
   useEffect(() => {
