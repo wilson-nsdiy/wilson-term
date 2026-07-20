@@ -2,211 +2,154 @@
 
 Wilson Term 是一个支持 SSH / Telnet / 串口 / 本地终端连接的模拟终端，Wilson 的个人项目。
 
+> 本文件面向 AI 编码助手（项目导航 + 关键约定）。面向人类读者的介绍见 [README.md](README.md)。
+
 ## 仓库地址
 
 - GitHub: https://github.com/wilson-nsdiy/wilson-term
 - Gitee: https://gitee.com/zhouws-chn/wilson-term
 
-## 核心功能
+## 架构概览
 
-- **SSH 连接**：支持密码认证、密钥认证、免密认证（ssh-agent + 默认密钥文件），主机密钥验证（known_hosts 管理），SSH 密钥对生成
-- **Telnet 连接**：基于 Node.js net 模块实现，处理 IAC 协商（DO/DONT/WILL/WONT），支持标准 Telnet 选项（echo、suppress go-ahead 等）
-- **串口通信**：支持配置波特率、数据位、停止位、校验位、流控（硬件/软件）等参数，自动列出可用串口，同一串口互斥访问
-- **本地终端**：基于 node-pty 实现本地 Shell（Windows 支持 CMD / PowerShell / WSL），支持启动目录配置
-- **多标签页管理**：支持同时打开多个终端会话，标签页显示连接类型图标和状态指示灯
-- **会话管理**：侧边栏保存连接模板，支持双击连接、右键菜单（连接/编辑/删除），自动去重保存
-- **日志记录**：仅记录输出数据，支持 ANSI 剥离、时间戳前缀、按大小/时间分割日志文件
-- **插件系统**：支持主进程/渲染进程双进程插件，ZIP 导入导出，权限声明，声明式 UI（状态栏项）
-- **SFTP 文件管理**：基于 SSH 通道的远程文件浏览、上传、下载、删除、重命名、新建目录
-- **搜索功能**：终端内容搜索，支持正则和大小写选项
-- **按钮栏**：自定义命令按钮分组，支持多命令发送
-- **定时任务**：按会话配置定时执行命令，支持启用/暂停/排序
-- **配置档案**：Profile 管理器，按连接类型应用全局配置覆盖
-- **多行粘贴确认**：检测多行粘贴内容，弹窗确认或自动发送
-- **键盘锁状态**：实时检测并显示 CapsLock/NumLock/ScrollLock 状态（Windows 通过 PowerShell/.NET 实现）
-- **自动更新**：检查版本更新，支持本版本忽略提示，启动时自动检查
-- **自定义窗口**：无边框窗口，自定义标题栏和菜单栏，Catppuccin Mocha 暗色主题
+桌面框架已从 **Electron** 迁移到 **Tauri 2**（提交 `c096007 删除electron并增加tauri`）。后端由 Node.js 改为**纯 Rust**，前端保留 React + TypeScript。
+
+```
+渲染进程 (React + xterm.js)  <-->  Tauri IPC (invoke / listen)  <-->  Rust 后端 (src-tauri/)
+       |                              |                                    |
+   Zustand Store              api.ts 类型安全封装                      commands.rs 命令注册中心
+   xterm 终端渲染            53 个 invoke + 6 个 listen 事件          connection/ ssh telnet serial bash
+                                                                     logger / sftp / plugin_host / storage / updater / keyboard
+```
+
+- **invoke**（请求-响应）：连接、断开、SFTP、存储、插件、日志、窗口控制等，共 53 个命令
+- **listen**（后端 → 前端推送）：`connection:data`、`connection:status`、`ssh:hostKeyVerify`、`ssh:passwordRequest`、`keyboard:lock-state-changed`、`update:status-changed`
 
 ## 技术栈
 
-- 桌面框架：Electron v33
-- 前端框架：React 18 + TypeScript 5
-- **终端引擎**：@xterm/xterm v6.1（beta 通道）+ addon-fit / addon-search / addon-web-links / addon-webgl / addon-unicode11
-- **SSH 客户端**：ssh2
-- **Telnet 连接**：原生 Node.js net 模块实现 IAC 协商
-- 串口通信：serialport v12
-- 本地终端：node-pty
-- **原生调用**：koffi（FFI 绑定，用于键盘锁检测等）
-- 构建工具：electron-vite v5 + Vite 6
-- 状态管理：Zustand 5
-- 样式方案：Tailwind CSS 3
-- 打包工具：electron-builder
-- **代码检查**：ESLint 10（flat config）
-- **日志**：electron-log
-- **本地存储**：electron-store
-- **自动更新**：electron-updater
-- **插件包**：adm-zip（ZIP 导入导出）
-- **字体列表**：font-list（系统字体获取）
+| 层 | 技术 |
+|---|---|
+| 桌面框架 | Tauri 2 |
+| 后端语言 | Rust（edition 2021，MSRV 1.77） |
+| 前端 | React 18 + TypeScript 5 |
+| 终端引擎 | @xterm/xterm v6.1（beta 通道）+ addon-fit / addon-search / addon-web-links / addon-webgl / addon-unicode11 |
+| SSH | russh 0.50 + russh-keys 0.50 + russh-sftp 2.x |
+| Telnet | 原生 Tokio TCP + IAC 协商（`connection/telnet.rs`） |
+| 串口 | serialport 4 |
+| 本地终端 | portable-pty 0.8（Windows: CMD/PowerShell/WSL） |
+| 异步运行时 | Tokio 1（full feature） |
+| 同步锁 | parking_lot 0.12（RwLock/Mutex） |
+| 构建/打包 | Vite 6（前端）+ tauri-build + tauri-cli（NSIS/MSI） |
+| 状态管理 | Zustand 5 |
+| 样式 | Tailwind CSS 3 |
+| Tauri 插件 | shell / dialog / fs / os / process / updater / store / clipboard-manager |
 
 ## 项目结构
 
 ```
 wilson-term/
+├── src-tauri/                    # Rust 后端
+│   ├── Cargo.toml                # 依赖与 release profile（lto/strip/panic=abort）
+│   ├── tauri.conf.json           # Tauri 配置（无边框窗口、NSIS/MSI 打包、updater endpoint）
+│   ├── rust-toolchain.toml       # pin stable 工具链
+│   ├── .cargo/config.toml        # build.rustc 绝对路径,绕过 rustup shim 回退坑(见已知坑)
+│   ├── build.rs
+│   └── src/
+│       ├── main.rs               # 二进制入口,调 lib::run()
+│       ├── lib.rs                # Tauri Builder:插件注册 + setup 闭包 + commands::register_all
+│       ├── commands.rs           # 命令注册中心:53 个 #[tauri::command] + register_all
+│       ├── types.rs              # 共享类型(SshConfig/SerialConfig/LogConfig/SftpFileEntry 等)
+│       ├── connection/
+│       │   ├── mod.rs
+│       │   ├── manager.rs         # 连接管理器:工厂 + 注册表 + 数据派发(ssh/telnet/serial/bash 四个 map)
+│       │   ├── ssh.rs             # SSH:russh Handler/认证/PTY/known_hosts/SFTP channel
+│       │   ├── telnet.rs          # Telnet:Tokio TCP + IAC 协商
+│       │   ├── serial.rs         # 串口:serialport 读写循环
+│       │   ├── bash.rs            # 本地终端:portable-pty spawn + 读取循环
+│       │   ├── c1_convert.rs      # C1 控制字符转换
+│       │   └── protocol_parser.rs
+│       ├── sftp.rs                # SFTP:复用 SSH channel 的 SftpSession,流式上传
+│       ├── logger.rs              # 日志:SessionLogger + LogManager,ANSI 剥离/按行缓冲/分割
+│       ├── plugin_host.rs         # 插件宿主:ZIP 导入导出/注册表/渲染代码/IPC 命名空间
+│       ├── storage.rs             # 本地存储:会话模板/按钮分组/定时任务/Profile 持久化到 JSON
+│       ├── updater.rs             # 更新:check_update + download_and_install(7 命令待补,见已知坑)
+│       └── keyboard.rs            # 键盘锁检测:Win32 GetKeyState,250ms 轮询 emit
 ├── src/
-│   ├── main/                  # Electron 主进程
-│   │   ├── index.ts           # 主进程入口：创建无边框窗口、注册 IPC、键盘锁检测
-│   │   ├── ipc.ts             # IPC 通信注册中心：窗口控制、存储、日志、SFTP、插件
-│   │   ├── keyboard.ts        # 键盘锁状态检测（CapsLock/NumLock/ScrollLock）
-│   │   ├── sftp.ts            # SFTP 文件管理：列表/上传/下载/删除/重命名/新建目录
-│   │   ├── plugin-host.ts     # 插件宿主：加载/激活/卸载/IPC 命名空间/ZIP 安全校验
-│   │   ├── domain.ts          # 域名检测：获取计算机 DNS 域名
-│   │   ├── updater.ts         # 更新管理：检查版本更新、读取 CHANGELOG
-│   │   ├── logger.ts          # 日志管理：SessionLogger + LogManager，ANSI 剥离、按行缓冲、分割
-│   │   ├── app-logger.ts      # 应用级日志：非会话日志输出
-│   │   ├── storage.ts         # 本地存储：会话模板/按钮分组/定时任务/Profile 等持久化到 JSON 文件
-│   │   └── connection/        # 连接管理（各协议统一框架）
-│   │       ├── types.ts             # 连接类型定义
-│   │       ├── base-connection.ts   # 基础连接抽象类
-│   │       ├── manager.ts           # 连接管理器：生命周期/事件分发
-│   │       ├── ipc.ts               # 连接相关 IPC 处理器
-│   │       ├── ssh-connection.ts    # SSH 连接：认证/PTY/主机密钥验证/密钥生成
-│   │       ├── telnet-connection.ts # Telnet 连接：基于 net 模块
-│   │       ├── telnet-protocol.ts   # Telnet IAC 协议协商实现
-│   │       ├── serial-connection.ts # 串口连接：打开/关闭/读写/串口列表
-│   │       ├── bash-connection.ts   # 本地终端连接：node-pty 启动/关闭/读写
-│   │       ├── protocol-parser.ts   # 协议解析器
-│   │       └── c1-convert.ts        # C1 控制字符转换
-│   ├── preload/
-│   │   └── index.ts           # contextBridge 暴露 window.api（dialog/window/connection/ssh/sftp/serial/bash/storage/keyboard/log/app/plugin/shell）
-│   ├── renderer/
-│   │   ├── index.html
-│   │   └── src/
-│   │       ├── main.tsx
-│   │       ├── App.tsx        # 根布局：TitleBar + Sidebar + TabBar + Terminal + SettingsDialog
-│   │       ├── components/
-│   │       │   ├── TitleBar.tsx           # 自定义标题栏（拖拽、窗口控制按钮）
-│   │       │   ├── MenuBar.tsx            # 下拉菜单栏（文件/编辑/选项/工具/帮助）
-│   │       │   ├── Sidebar.tsx            # 会话管理侧边栏（连接模板列表、右键菜单）
-│   │       │   ├── TabBar.tsx             # 标签栏（类型图标、状态指示灯、关闭按钮）
-│   │       │   ├── Terminal.tsx           # 终端容器（WelcomeTerminal + TerminalInstance）
-│   │       │   ├── TerminalInstance.tsx    # 终端实例核心（xterm.js 管理、数据流绑定、插件、右键菜单）
-│   │       │   ├── TerminalStatusBar.tsx  # 终端状态栏（连接信息、插件状态栏项、键盘锁指示器）
-│   │       │   ├── TerminalContextMenu.tsx # 终端右键菜单（复制/粘贴）
-│   │       │   ├── NewConnectDialog.tsx   # 新建/编辑连接对话框（SSH/Telnet/串口/本地终端表单）
-│   │       │   ├── SettingsDialog.tsx     # 全局设置对话框（外观/日志/操作设置）
-│   │       │   ├── InputDialog.tsx        # 通用输入对话框（替代 prompt()）
-│   │       │   ├── LogConfigSection.tsx   # 日志配置组件（可复用）
-│   │       │   ├── HostKeyDialog.tsx       # 主机密钥验证对话框
-│   │       │   ├── PasswordDialog.tsx     # SSH 密码输入对话框
-│   │       │   ├── UpdateDialog.tsx       # 更新日志与检查更新对话框
-│   │       │   ├── UpdateToast.tsx        # 更新通知 Toast 组件
-│   │       │   ├── ChangelogDialog.tsx    # 更新日志对话框
-│   │       │   ├── AboutDialog.tsx        # 关于对话框
-│   │       │   ├── ErrorDialog.tsx        # 错误提示弹窗
-│   │       │   ├── PluginManager.tsx      # 插件管理对话框（列表/导入/导出/卸载/启禁用）
-│   │       │   ├── SftpFileManager.tsx     # SFTP 文件管理对话框（远程文件浏览/上传/下载）
-│   │       │   ├── SearchBar.tsx          # 终端搜索栏
-│   │       │   ├── CommandInput.tsx       # 命令行输入栏
-│   │       │   ├── ButtonBar.tsx          # 命令按钮栏
-│   │       │   ├── ButtonBarManager.tsx   # 按钮栏管理对话框
-│   │       │   ├── MultiLinePasteDialog.tsx # 多行粘贴确认对话框
-│   │       │   ├── ScheduledTaskDialog.tsx  # 定时任务管理对话框
-│   │       │   ├── ScheduledTaskEditor.tsx  # 定时任务编辑器
-│   │       │   ├── GlobalOptionsDialog.tsx  # 全局选项对话框
-│   │       │   └── ProfileManager.tsx      # 配置档案管理对话框
-│   │       ├── store/
-│   │       │   └── index.ts    # Zustand 状态：sessions/savedSessions/settings/commandButtonGroups/scheduledTasks/profiles/keyboardLockStates/skipVersions/viewState
-│   │       ├── utils/
-│   │       │   ├── logConfig.ts        # 日志配置工具（创建/合并连接级与全局配置）
-│   │       │   ├── settingsResolver.ts # 设置解析工具（Profile 覆盖合并）
-│   │       │   ├── pasteFilter.ts      # 粘贴过滤工具（多行检测/安全过滤）
-│   │       │   └── font.ts            # 字体工具（系统字体列表获取）
-│   │       └── styles/
-│   │           └── globals.css
-│   │   └── plugin-host.ts    # 渲染进程插件宿主：沙箱加载/生命周期/数据流分发
-│   └── shared/
-│       ├── constants.ts     # 共享常量
-│       └── types/
-│           ├── index.ts       # 共享类型：SSHConfig/TelnetConfig/SerialConfig/LogConfig/AppSettings/KeyboardLockState/UpdateCheckResult/ChangelogEntry/ExposedAPI 等
-│           ├── plugin.ts      # 插件类型：PluginManifest/PluginContext/MainPlugin/RendererPlugin/PluginAPI 等
-│           └── profile.ts     # Profile 类型：Profile/ProfileOverrides
-├── build/                    # 打包后处理脚本
-├── scripts/                   # 构建辅助脚本
-├── docs/                      # 插件开发文档与示例
-├── resources/                 # 应用图标
-├── electron-builder.yml       # 打包配置（NSIS/DMG/AppImage，asarUnpack 原生模块）
-├── electron.vite.config.ts    # 构建配置（@shared/@renderer 别名，__APP_VERSION__ 注入）
-├── tailwind.config.js         # Tailwind 配置（Catppuccin Mocha 色值、等宽字体栈）
-├── package.json
-└── tsconfig*.json
+│   └── renderer/
+│       ├── index.html
+│       └── src/
+│           ├── main.tsx
+│           ├── App.tsx            # 根布局:TitleBar + Sidebar + TabBar + Terminal + SettingsDialog
+│           ├── api.ts            # Tauri invoke/listen 封装(对应原 preload contextBridge)
+│           ├── components/        # 29 个 UI 组件
+│           ├── store/             # Zustand 状态
+│           ├── hooks/
+│           ├── utils/
+│           └── styles/
+├── scripts/
+│   ├── patch-xterm.js            # postinstall 给 xterm 5.5.0 打补丁(见已知坑)
+│   ├── generate-icons.js
+│   ├── package-beta.js
+│   └── set-prerelease-version.js
+├── docs/                         # 插件开发文档与示例
+├── resources/                     # 应用图标
+├── vite.config.ts
+├── tailwind.config.js            # ESM (export default)
+├── postcss.config.js             # ESM (export default)
+├── eslint.config.js              # ESLint flat config
+└── package.json                  # type: module
 ```
 
-## 架构设计
+## 关键约定（改 Rust 后端必读）
 
-### 进程间通信
+### 1. 锁:用 parking_lot,不要在 async 里 blocking
 
-```
-渲染进程 (React)  <-->  预加载脚本 (contextBridge)  <-->  主进程 (Electron)
-     |                          |                              |
-  Zustand Store          window.api 封装              IPC 处理器注册
-  UI 组件渲染          类型安全的 API 桥梁           SSH/串口/日志/存储管理
-```
+`connection/manager.rs` 的 `MANAGER_STATE` 和 `logger.rs` 的 `LOG_MANAGER` 用 `parking_lot::RwLock`（**同步锁**），不是 `tokio::sync::RwLock`。
 
-- **invoke/handle**（请求-响应）：连接、断开、查询状态、文件对话框、存储操作、SFTP 操作、插件管理、更新检查、更新日志、版本忽略
-- **on/send**（单向推送）：数据写入、窗口控制、密钥验证回应、密码回应
-- **事件监听**（主→渲染推送）：数据接收（connection:data）、状态变更（connection:status）、密钥验证请求（ssh:hostKeyVerify）、密码请求（ssh:passwordRequest）、键盘锁状态变化（keyboard:lock-state-changed）
+- ✅ 在 async 命令里直接 `.read()` / `.write()`（短持克隆 Arc，微秒级，不触发 tokio 阻塞检测）
+- ❌ 不要用 `tokio::sync::RwLock` 的 `blocking_read()` / `blocking_write()`——在 async 上下文会 panic `Cannot block the current thread from within a runtime`
+- ❌ 不要在外层再包 `parking_lot::Mutex<ManagerState>`——内层字段已是 RwLock，外层 Mutex 多余
 
-### 状态管理
+历史教训：迁移初版用 `parking_lot::Mutex<ManagerState>` 包 `tokio::sync::RwLock`，在 async 命令里 `blocking_read()`，导致连接/日志一交互就 panic。已修复为 `static MANAGER_STATE: Lazy<ManagerState>` + `parking_lot::RwLock`。
 
-Zustand 管理所有 UI 状态和会话状态。持久化数据通过 IPC 存储到主进程的 JSON 文件（`%LOCALAPPDATA%/wilson-term/`）。
+### 2. setup 闭包里 spawn 用 tauri::async_runtime
 
-### 插件系统
+`lib.rs` 的 `setup` 闭包是**同步**的，此时主线程未进入 Tokio runtime 上下文。
 
-- 插件以 ZIP 包导入，解压到 `{userData}/plugins/{id}/`
-- 主进程插件通过 `require()` 加载，可注册 IPC handler、发起网络请求、访问存储
-- 渲染进程插件通过 `new Function()` 沙箱加载，可监听终端数据流、声明状态栏项
-- 权限声明控制上下文 API 注入，IPC 通道自动命名空间化（`plugin:{id}:*`）
-- 插件开发示例位于 `docs/plugin-demo/`，包含主进程 IPC、渲染进程状态栏、终端输入监听等完整功能
+- ✅ `tauri::async_runtime::spawn(async move { ... })`
+- ❌ `tokio::spawn(...)`——会 panic `there is no reactor running`
 
-### 日志系统
+`keyboard.rs` 的键盘锁轮询 task 必须用 `tauri::async_runtime::spawn`。
 
-- 仅记录输出方向数据（不记录用户输入）
-- 剥离 ANSI 转义序列后按行缓冲写入
-- 支持时间戳前缀、按大小（默认 10MB）和按时间（每天）分割
-- 日志文件命名：`ssh_{host}_{port}_{timestamp}.log` / `telnet_{host}_{port}_{timestamp}.log` / `serial_{port}_{baudRate}_{timestamp}.log`
-- 默认存储路径：`{文档目录}/wilson-term/logs/`
+### 3. 全局 AppHandle 注入
 
-### SSH 认证流程
+`commands.rs` / `updater.rs` / `plugin_host.rs` 各自持 `static GLOBAL_APP: StdMutex<Option<AppHandle>>`。`lib.rs` setup 闭包必须显式调三个模块的 `set_global_app(handle.clone())`，否则 `dispatch_host_key_verify` / `dispatch_password_request` / `update:status-changed` 派发、插件 IPC 命名空间派发都会失效。
 
-1. **密码认证**：有密码时直接使用；密码为空时自动切换免密认证
-2. **免密认证**：同时尝试 ssh-agent（Windows: Pageant/OpenSSH Agent）和默认密钥文件（优先应用目录 `%LOCALAPPDATA%/wilson-term/.ssh`，回退 `~/.ssh`）
-3. **密钥认证**：支持指定密钥文件路径和 passphrase（UI 暂标记"暂不支持"）
-4. **主机密钥验证**：应用专属 known_hosts 管理，首次连接弹窗确认，密钥变更红色警告
+### 4. 命令注册
 
-## 开发环境要求
+新增 `#[tauri::command]` 后，必须在 `commands.rs` 的 `register_all()` 的 `generate_handler!` 列表里登记，否则前端 invoke 报「command not found」。当前共 53 个命令。
 
-- Node.js >= 22
-- npm >= 9
-- Git
-- Python 3.x（用于编译原生模块）
-- C++ 编译工具链（Windows: Visual Studio Build Tools, macOS: Xcode Command Line Tools）
+### 5. ESM 配置文件
 
-## 快速开始
+`package.json` 是 `"type": "module"`，故 `tailwind.config.js` / `postcss.config.js` 必须用 `export default {}`，不能用 `module.exports`。
+
+### 6. xterm 补丁机制
+
+`scripts/patch-xterm.js` 在 `npm install`（postinstall）时给 `@xterm/xterm` 5.5.0 打补丁，修复 Viewport 裸 `setTimeout` 导致 dispose 后访问 dimensions 抛 Uncaught 的缺陷。改 xterm 相关代码前先看这个脚本。详见 [[xterm-patch-mechanism]]。
+
+## 已知坑 / 待办
+
+- **rustup shim 工具链回退**：`cargo` 子进程环境下 rustup shim 可能回退到旧工具链（1.56），致 `ff`/`dashmap` 报 `Unrecognized option: 'check-cfg'`。持久修复：`src-tauri/.cargo/config.toml` 设 `[build] rustc = "<stable 绝对路径>"`。详见 [[rust-toolchain-fallback-bug]]。
+- **7 个更新器命令未补**：前端 `window.api.updater.*`（`app_check_update`/`download_update`/`cancel_download_update`/`install_update`/`get_update_status`/`get_ignored_versions`/`save_ignored_versions`）后端只实现了 `check_update` + `download_and_install`，缺 cancel/install 分离、ignored versions 持久化、7 天间隔、changelog 提取。需对照原 `src/main/updater.ts`（`c096007^` 可看）重写状态机。详见 [[tauri-migration-handover]]。
+- **shell.open 已废弃**：`commands.rs` 的 `shell_open_external` 用 `tauri_plugin_shell::open`（已 deprecated），前端 `api.ts` 也用 `@tauri-apps/plugin-shell` 的 `open` 打开日志文件/目录。两处都加了 `#[allow(deprecated)]` / 待统一迁移到 `tauri-plugin-opener`。
+
+## 开发
 
 ```bash
-npm install
-npm run dev        # 开发模式
-npm run build      # 构建生产版本
-npm run package    # 打包应用
-npm run typecheck  # TypeScript 类型检查
-npm run lint       # ESLint 代码检查
+npm install          # 含 postinstall: patch-xterm.js
+npm run dev          # tauri dev(前端 vite + 后端 cargo run)
+npm run build        # tauri build(生产打包)
+npm run typecheck    # tsc --noEmit
+npm run lint         # eslint
 ```
 
-## 注意事项
-
-- 串口功能需要相应的硬件权限（Linux 下可能需要将用户加入 dialout 组）
-- SSH/Telnet 连接时请确保目标主机可访问且防火墙允许连接
-- 首次运行可能需要安装系统依赖（如 Windows 下的 Visual C++ Redistributable）
-- 插件运行需相应权限和网络环境
-- 自动更新功能需网络路径可达
-- 原生模块（serialport、ssh2）通过 asarUnpack 排除在 asar 包外
+环境要求：Node.js >= 22、Rust stable（rustup）、Windows 需 Visual Studio Build Tools（C++ 桌面开发）。

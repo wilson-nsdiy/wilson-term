@@ -1,6 +1,6 @@
 {
   "name": "wilson-terminal",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Wilson 的 SSH / Telnet / 串口模拟终端",
   "author": {
     "name": "Wilson",
