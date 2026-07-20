@@ -22,7 +22,11 @@ pub fn init(app: &tauri::AppHandle) {
         .ok(); // 已初始化时忽略(测试重复 init 场景)
 
     let app_handle = app.clone();
-    tokio::spawn(async move {
+    // 用 tauri::async_runtime::spawn 而非 tokio::spawn:
+    // setup 闭包是同步的,此时主线程未进入 Tokio runtime 上下文,
+    // 直接 tokio::spawn 会 panic "there is no reactor running"。
+    // tauri::async_runtime::spawn 走 Tauri 内置 runtime,setup 阶段即可用。
+    tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {

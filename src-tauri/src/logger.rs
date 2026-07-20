@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use chrono::{Datelike, Local, Timelike};
-use tokio::sync::RwLock;
+use parking_lot::RwLock;
 
 use crate::types::{ConnectionConfig, LogConfig};
 
@@ -239,12 +239,6 @@ impl SessionLogger {
         self.output_buffer.clear();
     }
 
-    fn close(mut self) {
-        self.flush();
-        // 关闭 writer 即可
-        self.writer = None;
-    }
-
     fn ensure_dir(&self, dir: &PathBuf) {
         let _ = create_dir_all(dir);
     }
@@ -303,7 +297,7 @@ pub fn create_logger(
     match SessionLogger::new(config, connection_config) {
         Ok(logger) => {
             let arc = Arc::new(StdMutex::new(logger));
-            LOG_MANAGER.loggers.blocking_write().insert(session_id.to_string(), arc);
+            LOG_MANAGER.loggers.write().insert(session_id.to_string(), arc);
         }
         Err(e) => log::error!("创建日志写入器失败 [{}]: {}", session_id, e),
     }
@@ -314,7 +308,7 @@ pub fn write(session_id: &str, direction: &str, data: &str) {
     if direction != "output" {
         return;
     }
-    let guard = LOG_MANAGER.loggers.blocking_read();
+    let guard = LOG_MANAGER.loggers.read();
     if let Some(logger) = guard.get(session_id) {
         if let Ok(mut g) = logger.lock() {
             g.write_output(data);
@@ -325,7 +319,7 @@ pub fn write(session_id: &str, direction: &str, data: &str) {
 /// 关闭会话日志
 pub async fn close_logger(session_id: &str) {
     let arc = {
-        let mut guard = LOG_MANAGER.loggers.write().await;
+        let mut guard = LOG_MANAGER.loggers.write();
         guard.remove(session_id)
     };
     if let Some(arc) = arc {
@@ -354,7 +348,7 @@ pub async fn close_logger(session_id: &str) {
 
 /// 获取日志文件路径
 pub async fn get_file_path(session_id: &str) -> Option<String> {
-    let guard = LOG_MANAGER.loggers.read().await;
+    let guard = LOG_MANAGER.loggers.read();
     guard.get(session_id).and_then(|arc| {
         // arc 是 Arc<StdMutex<SessionLogger>>;lock() 返回 Result<MutexGuard>
         (*arc)
@@ -366,7 +360,7 @@ pub async fn get_file_path(session_id: &str) -> Option<String> {
 
 /// 获取日志根目录
 pub async fn get_log_dir(session_id: &str) -> Option<String> {
-    let guard = LOG_MANAGER.loggers.read().await;
+    let guard = LOG_MANAGER.loggers.read();
     guard.get(session_id).and_then(|arc| {
         (*arc)
             .lock()
