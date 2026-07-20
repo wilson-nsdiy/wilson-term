@@ -1,68 +1,90 @@
 /**
  * 图标生成脚本
- * 从 resources/icon.png 生成各平台及 UI 所需的图标文件
+ * 从根目录 ico.png 生成各平台及 UI 所需的图标文件
+ *
+ * 输出位置 (Tauri 2 约定):
+ *   src-tauri/icons/icon.png      应用主图标 (Linux)
+ *   src-tauri/icons/icon.ico      Windows 安装包图标
+ *   src-tauri/icons/icon.icns     macOS 应用图标
+ *   src-tauri/icons/32x32.png     Linux 桌面图标
+ *   src-tauri/icons/128x128.png   Linux 桌面图标
+ *   src-tauri/icons/[size]x[size].png  其他尺寸
+ *   src/renderer/src/assets/icon-16.png   UI 1x
+ *   src/renderer/src/assets/icon-32.png   UI 2x
+ *   src/renderer/src/assets/logo.png      About 对话框
  */
-const sharp = require('sharp');
-const pngToIco = require('png-to-ico');
-const fs = require('fs');
-const path = require('path');
+import sharp from 'sharp';
+import pngToIco from 'png-to-ico';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const ROOT = path.resolve(__dirname, '..');
-const SOURCE = path.join(ROOT, 'resources/icon.png');
-const RESOURCES = path.join(ROOT, 'resources');
+const SOURCE = path.join(ROOT, 'ico.png');
+const ICONS_DIR = path.join(ROOT, 'src-tauri/icons');
 const ASSETS = path.join(ROOT, 'src/renderer/src/assets');
+
+// Linux 桌面文件常用尺寸
+const LINUX_SIZES = [32, 128, 256];
 
 async function main() {
   if (!fs.existsSync(SOURCE)) {
-    console.error('源图标不存在: resources/icon.png');
+    console.error('源图标不存在: ico.png');
     process.exit(1);
   }
-  console.log('正在从 resources/icon.png 生成图标文件...');
+  console.log('正在从 ico.png 生成图标文件...');
 
   // 缓存源图像，避免后续 resize 覆盖源文件
   const sourceBuf = fs.readFileSync(SOURCE);
   const sourceSharp = () => sharp(sourceBuf);
 
   // 确保输出目录存在
-  if (!fs.existsSync(RESOURCES)) {
-    fs.mkdirSync(RESOURCES, { recursive: true });
-  }
+  fs.mkdirSync(ICONS_DIR, { recursive: true });
+  fs.mkdirSync(ASSETS, { recursive: true });
 
-  // 1. 生成 icon-256.png (256x256, 用于 Linux AppImage)
-  console.log('生成 icon-256.png (256x256)...');
-  const icon256 = path.join(RESOURCES, 'icon-256.png');
+  // 1. 应用主图标 icon.png (512x512, Tauri 默认读取的 PNG 主图标)
+  console.log('生成 src-tauri/icons/icon.png (512x512)...');
   await sourceSharp()
-    .resize(256, 256, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .png()
-    .toFile(icon256);
-  console.log('  ✓ icon-256.png 已生成');
+    .toFile(path.join(ICONS_DIR, 'icon.png'));
+  console.log('  ✓ icon.png 已生成');
 
-  // 2. 生成 icon.ico (Windows, 包含 16/32/48/64/128/256 尺寸)
-  console.log('生成 icon.ico (多尺寸)...');
-  const sizes = [16, 32, 48, 64, 128, 256];
+  // 2. icon.ico (Windows, 包含 16/32/48/64/128/256 尺寸)
+  console.log('生成 src-tauri/icons/icon.ico (多尺寸)...');
+  const icoSizes = [16, 32, 48, 64, 128, 256];
   const pngBuffers = [];
-  for (const size of sizes) {
+  for (const size of icoSizes) {
     const buf = await sourceSharp()
       .resize(size, size, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
       .png()
       .toBuffer();
     pngBuffers.push(buf);
   }
-  const icoBuffer = await pngToIco.default(pngBuffers);
-  fs.writeFileSync(path.join(RESOURCES, 'icon.ico'), icoBuffer);
+  const icoBuffer = await pngToIco(pngBuffers);
+  fs.writeFileSync(path.join(ICONS_DIR, 'icon.ico'), icoBuffer);
   console.log('  ✓ icon.ico 已生成');
 
-  // 3. 生成 icon.icns (macOS)
-  console.log('生成 icon.icns (macOS)...');
-  await generateIcns(sourceSharp);
+  // 3. icon.icns (macOS)
+  console.log('生成 src-tauri/icons/icon.icns (macOS)...');
+  await generateIcns(sourceSharp, path.join(ICONS_DIR, 'icon.icns'));
   console.log('  ✓ icon.icns 已生成');
 
-  // 4. 生成 assets 目录下的图标 (用于渲染进程 UI)
-  if (!fs.existsSync(ASSETS)) {
-    fs.mkdirSync(ASSETS, { recursive: true });
+  // 4. Linux 桌面文件所需尺寸 (32x32.png / 128x128.png / 256x256.png)
+  for (const size of LINUX_SIZES) {
+    console.log(`生成 src-tauri/icons/${size}x${size}.png...`);
+    await sourceSharp()
+      .resize(size, size, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toFile(path.join(ICONS_DIR, `${size}x${size}.png`));
+    console.log(`  ✓ ${size}x${size}.png 已生成`);
   }
 
-  // 4a. 生成 icon-16.png (16x16, 用于 TitleBar 1x)
+  // 5. 渲染进程 UI 图标
+  // 5a. icon-16.png (16x16, 用于 TitleBar 1x)
   console.log('生成 assets/icon-16.png (16x16)...');
   await sourceSharp()
     .resize(16, 16, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
@@ -70,7 +92,7 @@ async function main() {
     .toFile(path.join(ASSETS, 'icon-16.png'));
   console.log('  ✓ icon-16.png 已生成');
 
-  // 4b. 生成 icon-32.png (32x32, 用于 TitleBar 2x)
+  // 5b. icon-32.png (32x32, 用于 TitleBar 2x)
   console.log('生成 assets/icon-32.png (32x32)...');
   await sourceSharp()
     .resize(32, 32, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
@@ -78,7 +100,7 @@ async function main() {
     .toFile(path.join(ASSETS, 'icon-32.png'));
   console.log('  ✓ icon-32.png 已生成');
 
-  // 4c. 复制源图标到 assets 作为 logo (用于 AboutDialog)
+  // 5c. 复制源图标到 assets 作为 logo (用于 AboutDialog)
   console.log('复制 logo.png 到 assets/...');
   fs.copyFileSync(SOURCE, path.join(ASSETS, 'logo.png'));
   console.log('  ✓ logo.png 已复制');
@@ -90,9 +112,7 @@ async function main() {
  * 生成 macOS .icns 文件
  * icns 格式由多个图标类型组成，每个类型包含不同尺寸的图像数据
  */
-async function generateIcns(sourceSharp) {
-  const icnsPath = path.join(RESOURCES, 'icon.icns');
-
+async function generateIcns(sourceSharp, icnsPath) {
   // icns 文件格式:
   // Magic: 'icns' (4 bytes)
   // File size: uint32 BE (4 bytes)
