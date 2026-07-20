@@ -53,9 +53,13 @@ async function main() {
     .toFile(path.join(ICONS_DIR, 'icon.png'));
   console.log('  ✓ icon.png 已生成');
 
-  // 2. icon.ico (Windows, 包含 16/32/48/64/128/256 尺寸)
+  // 2. icon.ico (Windows, 包含 32/16/48/64/128/256 尺寸)
+  // 帧序很重要: Tauri 2.x 在编译期用 tauri-codegen 的 new_ico() 只取 ICO 的
+  // 第一帧嵌入为运行期窗口图标 (tauri#14596)。Windows 任务栏需要 24/32px,
+  // 若第一帧是 16x16,放大后任务栏 / Alt+Tab 会模糊。
+  // 因此把 32x32 放第一帧 (Tauri 官方文档亦推荐如此),保证任务栏清晰。
   console.log('生成 src-tauri/icons/icon.ico (多尺寸)...');
-  const icoSizes = [16, 32, 48, 64, 128, 256];
+  const icoSizes = [32, 16, 48, 64, 128, 256];
   const pngBuffers = [];
   for (const size of icoSizes) {
     const buf = await sourceSharp()
