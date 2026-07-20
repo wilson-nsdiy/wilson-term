@@ -301,16 +301,14 @@ async function logGetDir(sessionId: string): Promise<string | null> {
 async function logOpenFile(sessionId: string): Promise<void> {
   const path = await logGetFilePath(sessionId)
   if (path) {
-    const { open } = await import('@tauri-apps/plugin-shell')
-    await open(path)
+    await invoke('shell_open_path', { path })
   }
 }
 
 async function logOpenDir(sessionId: string): Promise<void> {
   const dir = await logGetDir(sessionId)
   if (dir) {
-    const { open } = await import('@tauri-apps/plugin-shell')
-    await open(dir)
+    await invoke('shell_open_path', { path: dir })
   }
 }
 

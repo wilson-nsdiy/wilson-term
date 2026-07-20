@@ -289,12 +289,23 @@ pub async fn log_get_dir(session_id: String) -> Option<String> {
 
 #[tauri::command]
 pub async fn shell_open_external(app: AppHandle, url: String) -> Result<(), String> {
-    // tauri-plugin-shell 的 open 已废弃,官方推荐 tauri-plugin-opener。
-    // 前端 api.ts 仍用 @tauri-apps/plugin-shell 的 open 打开日志文件/目录,
-    // 待前端一并迁移到 opener 后,此处可改用 tauri_plugin_opener::open_url。
-    use tauri_plugin_shell::ShellExt;
-    #[allow(deprecated)]
-    app.shell().open(url, None).map_err(|e| e.to_string())
+    // 已迁移到 tauri-plugin-opener(原 tauri-plugin-shell::open 已废弃且仅接受 URL)。
+    // open_url 专门打开 http(s)/mailto/tel 等外部链接。
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn shell_open_path(app: AppHandle, path: String) -> Result<(), String> {
+    // 用 tauri-plugin-opener 的 open_path 打开本地文件/目录。
+    // 旧方案用 @tauri-apps/plugin-shell 的 open(path),其内部对参数做 URL 正则校验
+    // ^((mailto:\w+)|(tel:\w+)|(https?://\w+)),本地路径无法匹配故报错。
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 // ========== 插件命令 ==========
@@ -422,6 +433,7 @@ pub fn register_all() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         log_get_file_path,
         log_get_dir,
         shell_open_external,
+        shell_open_path,
         plugin_list,
         plugin_toggle,
         plugin_import_zip,
