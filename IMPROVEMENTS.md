@@ -27,19 +27,7 @@ function hasXTermCore(term: Terminal): term is Terminal & XTermInternals {
 }
 ```
 
-#### 1.2 版本兼容性检查
-```typescript
-const TESTED_XTERM_VERSIONS = ['5.5.0']
-
-function checkXTermVersion(): void {
-  const version = getXTermVersion() // 运行时 require('@xterm/xterm/package.json').version
-  if (!TESTED_XTERM_VERSIONS.includes(version)) {
-    console.warn(`[xtermEnhancements] 当前 xterm 版本 (${version}) 未经过测试`)
-  }
-}
-```
-
-#### 1.3 降级模式支持
+#### 1.2 降级模式支持
 - `PinnedScroll` 在 `_core` API 不可用时自动启用降级模式
 - 降级模式下使用 xterm 公开 API（`scrollToBottom()`），确保基础功能可用
 - 所有依赖私有 API 的方法都有降级路径

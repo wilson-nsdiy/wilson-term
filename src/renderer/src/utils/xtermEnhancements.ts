@@ -29,9 +29,6 @@ import type { Terminal } from '@xterm/xterm'
 // 让渲染器真正可用。代价是 addon 体积进入 bundle，但它们本就是项目依赖。
 import { WebglAddon } from '@xterm/addon-webgl'
 
-/** 在本增强模块测试过的 xterm 版本 */
-const TESTED_XTERM_VERSIONS = ['6.1.0-beta.288']
-
 /**
  * 安全地执行 fitAddon.fit()。
  *
@@ -129,33 +126,6 @@ const DIMENSIONS_FALLBACK = {
     cell: { width: 0, height: 0 },
     char: { width: 0, height: 0, left: 0, top: 0 },
   },
-}
-
-/**
- * 获取 xterm 版本号。
- *
- * 版本在构建期由 electron.vite.config.ts 的 renderer.define 从
- * @xterm/xterm/package.json 静态注入为 __XTERM_VERSION__。渲染进程是 Vite 打包的
- * ESM 且 nodeIntegration=false，运行时既无 require，也无法靠
- * require('@xterm/xterm/package.json') 这种子路径导入读版本（Vite 默认不优化
- * 包的子路径导入，运行时会抛错）。故改用构建期注入，避免误报 'unknown'。
- */
-function getXTermVersion(): string {
-  return __XTERM_VERSION__
-}
-
-/** 检查 xterm 版本兼容性（非阻断，仅警告），全局只检查一次 */
-let versionChecked = false
-function checkXTermVersion(): void {
-  if (versionChecked) return
-  versionChecked = true
-
-  const version = getXTermVersion()
-  if (!TESTED_XTERM_VERSIONS.includes(version)) {
-    console.warn(
-      `[xtermEnhancements] 当前 xterm 版本 (${version}) 未经过测试，已测试版本: ${TESTED_XTERM_VERSIONS.join(', ')}`
-    )
-  }
 }
 
 /** 性能统计接口 */
@@ -356,9 +326,6 @@ export class PinnedScroll {
   private static readonly MAX_CONSECUTIVE_ERRORS = 10
 
   constructor(private xterm: Terminal, private flowControl: FlowControl) {
-    // 版本兼容性检查（全局只检查一次）
-    checkXTermVersion()
-
     // 接管滚底决策：阻止用户输入把历史视图强制拉到底部。主动滚底统一使用
     // Terminal.scrollToBottom() 公开 API，避免依赖 _core.scrollToBottom。
     xterm.options.scrollOnUserInput = false
@@ -711,7 +678,6 @@ export class RendererManager {
     private host: HTMLElement,
     private preferred: RendererType
   ) {
-    checkXTermVersion()
     this.xtermCore = (xterm as any)['_core']
   }
 
