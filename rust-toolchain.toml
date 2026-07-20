@@ -1,0 +1,5 @@
+# 固定本项目使用 stable 工具链
+# 防止 rustup shim 在编译依赖时回退到其他已安装的旧工具链
+# (如 1.56.0,不支持 --check-cfg,会导致 ff/dashmap 等依赖编译失败)
+[toolchain]
+channel = "stable"
