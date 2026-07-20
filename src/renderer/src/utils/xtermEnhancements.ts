@@ -426,6 +426,17 @@ export class PinnedScroll {
     return buffer.baseY - buffer.viewportY <= PinnedScroll.BOTTOM_TOLERANCE
   }
 
+  /**
+   * 当前是否处于 alternate buffer（TUI 全屏模式，如 opencode / claude code / vim）。
+   *
+   * Alt buffer 是单屏无 scrollback 的固定视口，TUI 通过 CUP（光标绝对定位）+ SU/SD
+   * （滚动区域）自行绘制整屏布局。此时任何 scrollToBottom / scrollToLine 都会破坏
+   * TUI 的光标坐标系，导致界面错乱。故所有滚动操作在 alt buffer 下都必须跳过。
+   */
+  private isAltBufferActive(): boolean {
+    return this.xterm.buffer.active.type === 'alternate'
+  }
+
   private updatePinnedState(): void {
     if (this.disposed) return
     this.pinnedToBottom = this.isAtBottom()
@@ -483,6 +494,10 @@ export class PinnedScroll {
     if (this.disposed) return
     this.consecutiveErrors = 0
 
+    // alternate buffer（TUI 全屏模式）下由 TUI 自行管理光标和滚动，
+    // 任何 scrollToBottom / scrollToLine 都会破坏其布局，故直接返回。
+    if (this.isAltBufferActive()) return
+
     if (wasPinned) {
       // 写入前已跟随底部：新输出无条件滚到底部。不检查 scrollGeneration——await 期间
       // 触控板惯性上滚会把 scrollGeneration 推高，若据此跳过滚底，回车后视口会停在
@@ -532,6 +547,9 @@ export class PinnedScroll {
   onUserInput(): void {
     if (this.disposed) return
     this.pinnedToBottom = true
+    // alternate buffer（TUI 全屏模式）下用户输入由 TUI 处理，
+    // 滚到底部会破坏 TUI 光标定位，故跳过。
+    if (this.isAltBufferActive()) return
     this.xterm.scrollToBottom()
   }
 
@@ -559,6 +577,9 @@ export class PinnedScroll {
     // await 期间组件可能卸载并销毁 xterm，停止后续访问
     if (this.disposed) return
 
+    // alternate buffer（TUI 全屏模式）下不滚动，避免破坏 TUI 布局
+    if (this.isAltBufferActive()) return
+
     this.xterm.scrollToBottom()
   }
 
@@ -572,6 +593,20 @@ export class PinnedScroll {
    */
   withScrollPreservation(fn: () => void, forceRepaint = false): void {
     if (this.disposed) return
+
+    // alternate buffer（TUI 全屏模式）下由 TUI 自行管理布局，
+    // 滚动位置保持逻辑无意义且会破坏光标定位，仅执行 fn 即可。
+    if (this.isAltBufferActive()) {
+      fn()
+      if (forceRepaint) {
+        try {
+          this.xterm.refresh(0, this.xterm.rows - 1)
+        } catch (e) {
+          console.warn('[PinnedScroll] refresh 失败:', e)
+        }
+      }
+      return
+    }
 
     this.updatePinnedState()
     const generation = this.scrollGeneration

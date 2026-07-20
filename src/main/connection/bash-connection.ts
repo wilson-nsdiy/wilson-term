@@ -66,10 +66,10 @@ export class BashConnection extends BaseConnection {
     super(options)
   }
 
-  /** 本地终端无网络延迟，直接透传数据避免 ANSI 序列拆分 */
-  protected bufferData(data: string): void {
-    this.options.onData(this.sessionId, data)
-  }
+  // 不重写 bufferData：复用 BaseConnection 的 16ms 批量合并。
+  // Claude Code 等 Ink/React TUI 先写整块布局，再用光标定位序列跳回重写各列；
+  // 直接透传会让 xterm 逐小块渲染并滚动，破坏后续重写，最终显示散落的中间状态
+  // 而非完整边框。基类缓冲合并成更大更完整的块，与 SSH 路径行为一致。
 
   async connect(): Promise<void> {
     const config = this.options.config as BashConfig
