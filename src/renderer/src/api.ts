@@ -306,6 +306,13 @@ async function logOpenFile(sessionId: string): Promise<void> {
 }
 
 async function logOpenDir(sessionId: string): Promise<void> {
+  // 打开日志所在目录,并选中日志文件(Windows: explorer /select; macOS: Finder; Linux: xdg)
+  const path = await logGetFilePath(sessionId)
+  if (path) {
+    await invoke('shell_reveal_path', { path })
+    return
+  }
+  // 兜底:拿不到具体文件路径时退回单纯打开目录
   const dir = await logGetDir(sessionId)
   if (dir) {
     await invoke('shell_open_path', { path: dir })

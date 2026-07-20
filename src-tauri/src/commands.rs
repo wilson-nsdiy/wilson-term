@@ -308,6 +308,15 @@ pub async fn shell_open_path(app: AppHandle, path: String) -> Result<(), String>
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn shell_reveal_path(app: AppHandle, path: String) -> Result<(), String> {
+    // 在文件管理器中打开 path 所在目录并选中 path(Win: explorer /select, macOS: Finder reveal, Linux: xdg-open)
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|e| e.to_string())
+}
+
 // ========== 插件命令 ==========
 // 对应前端 window.api.plugin.* 的 8 个 invoke
 // 底层逻辑在 plugin_host.rs(导入/导出/注册表/渲染代码)与 connection::manager(write/sessions)
@@ -434,6 +443,7 @@ pub fn register_all() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send 
         log_get_dir,
         shell_open_external,
         shell_open_path,
+        shell_reveal_path,
         plugin_list,
         plugin_toggle,
         plugin_import_zip,
