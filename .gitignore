@@ -5,7 +5,11 @@ node_modules/
 dist/
 out/
 
-# electron-vite
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# electron-vite (legacy)
 release/
 
 # IDE
