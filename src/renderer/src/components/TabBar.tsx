@@ -89,7 +89,7 @@ const TabBar: React.FC = () => {
               }`}>
                 {session.config.type === 'ssh' ? 'SSH' : session.config.type === 'telnet' ? 'TLN' : session.config.type === 'bash' ? 'BASH' : 'SRL'}
               </span>
-              <span className="max-w-[160px] truncate">{session.config.name}</span>
+              <span className="max-w-[160px] truncate" title={session.config.name}>{session.config.name}</span>
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
                   session.status === 'connected'
