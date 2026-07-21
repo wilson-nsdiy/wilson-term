@@ -3,7 +3,7 @@
  * 仅处理协议级解析（Telnet IAC、自定义 OSC），不处理 VT 渲染序列（由 xterm.js 处理）
  */
 
-import { decodeBufferForTerminal } from './c1-convert'
+import { StreamUtf8Decoder } from './c1-convert'
 
 /** 协议解析器状态 */
 export const ParserState = {
@@ -51,6 +51,16 @@ export class ProtocolParser {
   private sbData: number[] = []
   private cleanBytes: number[] = []
   private callbacks: { [K in keyof ProtocolEvents]?: EventCallback<ProtocolEvents[K]>[] } = {}
+  /**
+   * 跨 chunk UTF-8 解码器。
+   *
+   * Telnet socket 的 Buffer 切分点随机，多字节字符可能被切到两个 chunk
+   * （如 "位" 字 UTF-8 E4 BD 8D 被切为 [E4 BD] + [8D]）。无状态解码会把
+   * 独立的 continuation byte 0x8D 误转为 ESC M (RI 反向索引)，注入光标
+   * 控制序列破坏 TUI 布局。本解码器持有 pending 状态，跨 feed() 调用
+   * 拼出完整字符。设计参考 WezTerm vtparse：只支持 UTF-8，不识别裸 8-bit C1。
+   */
+  private readonly utf8Decoder = new StreamUtf8Decoder()
 
   /** 输入原始字节流，返回剥离 IAC 后的干净 UTF-8 数据 */
   feed(raw: Buffer): string {
@@ -137,7 +147,7 @@ export class ProtocolParser {
     if (this.cleanBytes.length) {
       const cleanBuf = Buffer.from(this.cleanBytes)
       this.cleanBytes = []
-      const clean = decodeBufferForTerminal(cleanBuf)
+      const clean = this.utf8Decoder.feed(cleanBuf)
       this.emit('data', clean)
       return clean
     }
@@ -164,6 +174,9 @@ export class ProtocolParser {
     this.state = ParserState.DATA
     this.sbOption = 0
     this.sbData = []
+    // 重置 UTF-8 解码器的跨 chunk pending 状态，
+    // 避免上次会话残留的多字节字符污染重连后的首帧
+    this.utf8Decoder.reset()
   }
 
   private emit<K extends keyof ProtocolEvents>(event: K, value: ProtocolEvents[K]): void {

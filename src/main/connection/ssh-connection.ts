@@ -8,7 +8,6 @@ import { app } from 'electron'
 import type { SSHConfig, HostKeyVerifyRequest, KeyPairResult, PasswordRequest } from '@shared/types'
 import type { ConnectionOptions } from './types'
 import { BaseConnection } from './base-connection'
-import { decodeBufferForTerminal } from './c1-convert'
 import { logManager } from '../logger'
 import { appLogger } from '../app-logger'
 import { cleanupSFTP } from '../sftp'
@@ -487,13 +486,13 @@ export class SSHConnection extends BaseConnection {
     }
 
     stream.on('data', (data: Buffer) => {
-      const s = decodeBufferForTerminal(data)
+      const s = this.decodeBuffer(data, 'stdout')
       logManager.write(this.sessionId, 'output', s)
       this.bufferData(s)
     })
 
     stream.stderr.on('data', (data: Buffer) => {
-      const s = decodeBufferForTerminal(data)
+      const s = this.decodeBuffer(data, 'stderr')
       logManager.write(this.sessionId, 'output', s)
       this.bufferData(s)
     })

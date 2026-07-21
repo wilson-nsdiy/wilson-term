@@ -2,7 +2,6 @@ import { SerialPort } from 'serialport'
 import type { SerialConfig } from '@shared/types'
 import type { ConnectionOptions } from './types'
 import { BaseConnection } from './base-connection'
-import { decodeBufferForTerminal } from './c1-convert'
 import { logManager } from '../logger'
 import { appLogger } from '../app-logger'
 
@@ -58,7 +57,7 @@ export class SerialConnection extends BaseConnection {
         }
 
         port.on('data', (data: Buffer) => {
-          const s = decodeBufferForTerminal(data)
+          const s = this.decodeBuffer(data)
           logManager.write(this.sessionId, 'output', s)
           this.bufferData(s)
         })

@@ -12,6 +12,7 @@ import { buildFontFamily } from '../utils/font'
 import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseModeEnabled } from '../utils/pasteFilter'
 import { computeSearchMatchInfo } from '../utils/searchMatch'
 import { FlowControl, PinnedScroll, RendererManager, patchRenderServiceDimensions, safeFit } from '../utils/xtermEnhancements'
+import { createImeLeakFilter } from '../utils/imeLeakFilter'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
 import TerminalStatusBar from './TerminalStatusBar'
@@ -51,6 +52,16 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   const pinnedScrollRef = useRef<PinnedScroll | null>(null)
   /** 渲染器管理器（WebGL/Canvas 加速 + GPU 上下文恢复） */
   const rendererManagerRef = useRef<RendererManager | null>(null)
+  /**
+   * IME 首字母漏出过滤器。
+   *
+   * 微软拼音等 IME 在首字母 keydown 时不返回 keyCode 229，compositionstart 在
+   * keydown 之后才触发，导致 xterm 的 CompositionHelper.keydown 把首字母当正常
+   * 字符通过 onData 发出（如输入"提交"远端收到"t提交"）。本过滤器在 onData 出口
+   * 拦截，识别"单 ASCII 字母 + 紧接 CJK 组合字符"的 IME 漏出模式并 drop 字母。
+   * 详见 docs/IME_LEAK_FIX_PLAN.md 与 utils/imeLeakFilter.ts。
+   */
+  const imeLeakFilterRef = useRef<ReturnType<typeof createImeLeakFilter> | null>(null)
   /** 数据订阅的取消函数 */
   const unsubscribeRef = useRef<(() => void) | null>(null)
   /** xterm 输入监听的销毁函数 */
@@ -146,12 +157,19 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     unsubscribeRef.current = unsub
 
     // 监听 xterm 用户输入，发送到连接
+    // 经 IME 漏出过滤器：识别"单 ASCII 字母 + 紧接 CJK 组合字符"模式并 drop 漏出的
+    // 首字母（修复微软拼音等 IME 在首字母 keydown 不返回 keyCode 229，导致 xterm
+    // 把首字母当正常字符发出的 bug）。filter 的 onFlush 透传合并后的内容到远端。
+    const imeLeakFilter = createImeLeakFilter((data) => {
+      window.api.connection.write(sid, data)
+    })
+    imeLeakFilterRef.current = imeLeakFilter
     const inputDisposable = xterm.onData((data) => {
       // 用户输入意味着结束回看、准备查看新输出，立即跟随底部，
       // 后续远端回显与命令输出即可自动滚到底部。
       pinnedScrollRef.current?.onUserInput()
       rendererPluginHost.feedInput(sid, data)
-      window.api.connection.write(sid, data)
+      imeLeakFilter.feed(data)
     })
     inputDisposableRef.current = inputDisposable
 
@@ -194,6 +212,15 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     if (inputDisposableRef.current) {
       inputDisposableRef.current.dispose()
       inputDisposableRef.current = null
+    }
+    // dispose IME 漏出过滤器：取消其 3000ms stash 超时定时器，
+    // 并 flush 暂存字母（若有）。sessionId 切换 / 重连走此路径，
+    // 必须先 dispose 旧 filter 再让 bindConnection 创建新的，
+    // 否则旧 filter 的 onFlush 闭包仍持有旧 sid，超时触发时
+    // 会向已不活跃的旧 sessionId 发 stale write。
+    if (imeLeakFilterRef.current) {
+      imeLeakFilterRef.current.dispose()
+      imeLeakFilterRef.current = null
     }
     if (statusUnsubscribeRef.current) {
       statusUnsubscribeRef.current()
@@ -428,6 +455,9 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       compositionMo?.disconnect()
       terminalRef.current?.removeEventListener('contextmenu', handleContextMenu)
       selectionChangeDisposable.dispose()
+      // 清理 IME 漏出过滤器：flush 暂存字母（若有），取消超时定时器
+      imeLeakFilterRef.current?.dispose()
+      imeLeakFilterRef.current = null
       unbindData()
 
       // 清理增强器（按依赖顺序：先 PinnedScroll 再 RendererManager，最后 xterm）
