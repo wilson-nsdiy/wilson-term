@@ -27,6 +27,25 @@
 const IME_LEAK_WINDOW_MS = 3000
 
 /**
+ * xterm 重复触发去重阈值（毫秒）。
+ *
+ * xterm.js 对同一按键会走两条分发路径：
+ *   1. `_keyDown`（CoreBrowserTerminal.ts:921）在 keydown 事件中 triggerDataEvent
+ *   2. `_inputEvent`（CoreBrowserTerminal.ts:1042）在 textarea 的 input 事件中 triggerDataEvent
+ * 两次 onData 触发位于同一事件循环微任务，间隔 < 1ms。
+ *
+ * 而人类最快连击间隔约 30ms。取 5ms 作为阈值：
+ *   - xterm 重复触发（< 1ms）远小于 5ms → 判定为重复，丢弃第二个
+ *   - 人类连击（> 30ms）远大于 5ms → 判定为真连续输入，正常处理
+ *
+ * 不做此去重时，单字母按键会触发两次 feed(letter)：
+ *   - 第一次 stash
+ *   - 第二次走 stashLetter 的 if 分支 flush 旧的 + stash 新的
+ *   后续非字母 feed 再 flush 一次 → 远端收到两个字母（"d " → "dd "）。
+ */
+const XTERM_DUPLICATE_THRESHOLD_MS = 5
+
+/**
  * CJK 表意文字范围判定。
  *
  * 覆盖微软拼音可能输出的所有 CJK 范围：
@@ -76,6 +95,8 @@ export interface ImeLeakFilter {
  */
 export function createImeLeakFilter(onFlush: (data: string) => void): ImeLeakFilter {
   let pendingLetter: string | null = null
+  /** 暂存字母的时间戳，用于 xterm 重复触发去重判定 */
+  let pendingAt = 0
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
 
@@ -98,13 +119,24 @@ export function createImeLeakFilter(onFlush: (data: string) => void): ImeLeakFil
 
   /**
    * 暂存单 ASCII 字母并安排超时。
-   * 若已有暂存字母（多字母连续输入视为真英文），先 flush 旧的再暂存新的。
+   *
+   * 若已有暂存字母：
+   *   - 新字母与旧的相同且间隔 < XTERM_DUPLICATE_THRESHOLD_MS → 判定为 xterm 对
+   *     同一按键的 keydown/input 双路径重复触发，丢弃新的、保持旧的暂存不变
+   *   - 否则（多字母连续 = 真英文输入）→ 先 flush 旧的再暂存新的
    */
   const stashLetter = (letter: string): void => {
     if (pendingLetter !== null) {
+      // xterm 对同一按键触发两次 onData（keydown + textarea input），
+      // 间隔 < 1ms；人类连击 > 30ms。5ms 阈值区分两者。
+      if (letter === pendingLetter && Date.now() - pendingAt < XTERM_DUPLICATE_THRESHOLD_MS) {
+        // 重复触发：丢弃新的，保持旧的暂存与超时不变
+        return
+      }
       // 多字母连续 = 真英文输入，立即 flush 旧的避免累积延迟
-      onFlush(pendingLetter)
       clearTimer()
+      onFlush(pendingLetter)
+      pendingLetter = null
     }
     pendingLetter = letter
     pendingAt = Date.now()
