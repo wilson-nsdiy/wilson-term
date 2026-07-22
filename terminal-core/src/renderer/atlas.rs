@@ -47,6 +47,12 @@ pub struct Sprite {
 ///
 /// 借鉴 wezterm `Atlas`（atlas.rs:21-28）:
 /// 一个 2 的幂的纹理,配合 guillotiere 的矩形分配器管理字形位置。
+///
+/// # 像素存储
+///
+/// 本阶段为逻辑分配器 + CPU 端 RGBA 像素缓冲区。阶段 6 集成 wgpu 时,
+/// 由 `src-tauri/` 把 `pixels` 上传到 `wgpu::Texture`。这样光栅化→缓存→
+/// 上传三步解耦,便于单测和后续替换后端。
 pub struct Atlas {
     /// 纹理尺寸（2 的幂,如 512）
     side: u16,
@@ -58,6 +64,11 @@ pub struct Atlas {
     total_pixels: u32,
     /// 纹理 ID（逻辑标识,用于 AtlasList 查找）
     id: usize,
+    /// RGBA 像素缓冲区（长度 = side * side * 4）
+    ///
+    /// 初始全 0（完全透明）。`write` 把光栅化位图拷到指定位置。
+    /// 阶段 6 上传到 wgpu 纹理时直接 read 这个 Vec。
+    pixels: Vec<u8>,
 }
 
 impl core::fmt::Debug for Atlas {
@@ -83,6 +94,7 @@ impl Atlas {
             allocated_pixels: 0,
             total_pixels: total,
             id,
+            pixels: vec![0u8; (side as usize) * (side as usize) * 4],
         }
     }
 
@@ -155,6 +167,50 @@ impl Atlas {
     pub fn clear(&mut self) {
         self.allocator = SimpleAtlasAllocator::new(Size::new(self.side as i32, self.side as i32));
         self.allocated_pixels = 0;
+        // 清零像素缓冲区
+        self.pixels.fill(0);
+    }
+
+    /// 把 RGBA 位图写入指定位置
+    ///
+    /// `x`/`y` 是 atlas 内的像素坐标（来自 `Sprite`）。
+    /// `data` 是源位图（RGBA,每像素 4 字节）。
+    /// `w`/`h` 是源位图尺寸。
+    ///
+    /// 越界或尺寸不匹配时静默忽略（调用方应保证 Sprite 与源位图尺寸一致）。
+    /// 借鉴 wezterm `Atlas::write` 的逐行拷贝模式。
+    pub fn write(&mut self, x: u16, y: u16, w: u16, h: u16, data: &[u8]) {
+        let side = self.side as usize;
+        let w = w as usize;
+        let h = h as usize;
+        let x = x as usize;
+        let y = y as usize;
+
+        if x + w > side || y + h > side {
+            return;
+        }
+        if data.len() < w * h * 4 {
+            return;
+        }
+
+        for row in 0..h {
+            let src_off = row * w * 4;
+            let dst_off = ((y + row) * side + x) * 4;
+            self.pixels[dst_off..dst_off + w * 4]
+                .copy_from_slice(&data[src_off..src_off + w * 4]);
+        }
+    }
+
+    /// 获取像素缓冲区（RGBA）
+    ///
+    /// 阶段 6 由 wgpu 上传逻辑 read 这个缓冲区。
+    pub fn pixels(&self) -> &[u8] {
+        &self.pixels
+    }
+
+    /// 获取像素缓冲区可变引用
+    pub fn pixels_mut(&mut self) -> &mut [u8] {
+        &mut self.pixels
     }
 }
 

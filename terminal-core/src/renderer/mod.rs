@@ -17,6 +17,7 @@
 
 pub mod atlas;
 pub mod atlas_list;
+pub mod cache;
 pub mod font;
 pub mod glyph;
 pub mod pipeline;
