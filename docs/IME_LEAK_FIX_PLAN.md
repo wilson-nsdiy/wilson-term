@@ -1,5 +1,26 @@
 # IME 首字母漏出修复方案
 
+> **状态：已回退（2026-07-21，commit `f100c86`）**
+>
+> 方案 C 已实现并合入，但实测发现严重副作用：`imeLeakFilter` 对**所有**单 ASCII
+> 字母做 3 秒暂存等待 CJK，导致普通英文输入也被延迟——表现为当前字符不显示、
+> 只显示上一个字符，连续打字体验崩溃。
+>
+> 根因在于方案 C 的设计缺陷：判定模式 `[a-zA-Z]` 覆盖面太广，无法区分"真英文
+> 输入"与"IME 首字母漏出"，3s 暂存窗口对前者造成不可接受延迟。commit `f100c86`
+> 删除 `src/renderer/src/utils/imeLeakFilter.ts` 与 `TerminalInstance.tsx` 中的
+> 接入点，恢复直接 `window.api.connection.write`。
+>
+> **当前立场**：
+>
+> - 微软拼音 IME 首字母漏出 bug（输入 `tijiao` 远端收到 `t提交`）**重新出现**，
+>   项目暂时接受此 bug 存在。
+> - 不再考虑方案 C 的"onData 出口暂存"路线。
+> - 待后续探索更精准的方案：方向是 **keydown 阶段同步判定**（参考 WezTerm macOS
+>   的 `ImmeDisposition` 状态机，或在 `compositionstart` 后用 `isComposing` 反向
+>   标记首字母），避免对正常英文路径产生任何副作用。
+> - 若有人按本文档重新实现方案 C，**务必先阅读本回顾小节**，避免重复踩坑。
+
 ## 问题现象
 
 在 Wilson Term 中使用微软拼音 IME 输入中文时，每次输入中文词组，发给远端的内容最前面会凭空多出一个 ASCII 字母。
@@ -276,6 +297,9 @@ const inputDisposable = xterm.onData((data) => {
 4. **上报 native addon 接入原生 IME API**：根治该问题（工程量大，当前架构约束下不优先）
 
 ## 实施步骤
+
+> **以下步骤对应已回退的方案 C 实现，仅作为历史记录保留。**
+> **不要照此重新实现——详见文档顶部"状态：已回退"小节。**
 
 1. **新建 `src/renderer/src/utils/imeLeakFilter.ts`**：实现 `createImeLeakFilter` 工厂函数与 `ImeLeakFilter` 接口
 2. **新建 `src/renderer/src/utils/imeLeakFilter.test.ts`**：覆盖上表 12 个单元测试场景
