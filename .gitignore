@@ -62,3 +62,6 @@ plugins/*/*.zip
 # AtomCode config (machine-specific, includes hooks with absolute paths)
 .atomcode/
 .mcp.json
+
+# Rust build output (workspace root)
+target/
