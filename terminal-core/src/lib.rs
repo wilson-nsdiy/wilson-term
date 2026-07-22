@@ -21,6 +21,7 @@
 
 pub mod parser;
 pub mod escape;
+pub mod state;
 
 /// crate 版本（从 Cargo.toml 注入）
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
