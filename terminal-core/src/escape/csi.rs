@@ -20,9 +20,10 @@
 use crate::parser::vtparse::CsiParam;
 
 /// SGR 颜色规格:索引色 / 5;N (256 色) / 2;R;G;B (True Color)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ColorSpec {
     /// 默认前景/背景（依赖于终端主题）
+    #[default]
     Default,
     /// 索引色（0-15:标准 16 色;16-231:216 色立方;232-255:24 灰度）
     Index(u8),
@@ -176,12 +177,80 @@ impl KittyKeyboardFlags {
         Self(bits & 0b11111)
     }
 
-    pub fn bits(self) -> u8 {
+    /// 从原始位构造（不做截断）
+    pub const fn from_bits(bits: u8) -> Self {
+        Self(bits)
+    }
+
+    /// 取底层位
+    pub const fn bits(self) -> u8 {
         self.0
     }
 
-    pub fn contains(self, other: Self) -> bool {
+    /// 是否包含 other 的全部位
+    pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
+    }
+
+    /// 集合合并
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// 集合差（self 中去掉 other 也有的位）
+    pub const fn difference(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+
+    /// 是否为空集
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl core::ops::BitOr for KittyKeyboardFlags {
+    type Output = Self;
+    #[inline(always)]
+    fn bitor(self, rhs: Self) -> Self {
+        self.union(rhs)
+    }
+}
+
+impl core::ops::BitOrAssign for KittyKeyboardFlags {
+    #[inline(always)]
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+impl core::ops::BitAnd for KittyKeyboardFlags {
+    type Output = Self;
+    #[inline(always)]
+    fn bitand(self, rhs: Self) -> Self {
+        Self(self.0 & rhs.0)
+    }
+}
+
+impl core::ops::Sub for KittyKeyboardFlags {
+    type Output = Self;
+    #[inline(always)]
+    fn sub(self, rhs: Self) -> Self {
+        self.difference(rhs)
+    }
+}
+
+impl core::ops::SubAssign for KittyKeyboardFlags {
+    #[inline(always)]
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0 &= !rhs.0;
+    }
+}
+
+impl core::ops::Not for KittyKeyboardFlags {
+    type Output = Self;
+    #[inline(always)]
+    fn not(self) -> Self {
+        Self(!self.0)
     }
 }
 
