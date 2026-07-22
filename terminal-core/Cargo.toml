@@ -9,6 +9,8 @@ rust-version.workspace = true
 # 终端核心：VT 解析、字形、布局、字体
 swash = { version = "0.1", features = ["render"] }
 fontdb = { version = "0.20", features = ["fs"] }
+# zeno 是 swash 的传递依赖,这里显式引入以便测试使用 `Placement`
+zeno = { version = "0.2", default-features = false }
 # 渲染层依赖
 wgpu = "24"
 guillotiere = "0.6"

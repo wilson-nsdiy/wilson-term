@@ -16,7 +16,6 @@
 
 use fontdb::{Database, Family, ID, Query, Style, Weight};
 use swash::shape::ShapeContext;
-use swash::text::cluster::{CharCluster, Status};
 use swash::FontRef;
 
 /// 字体请求
@@ -341,62 +340,50 @@ impl TextShaper {
 
     /// 对文本进行 shaping,返回 ShapedGlyph 序列
     ///
-    /// 借鉴 wezterm 的 `shape_text`:
-    /// - 把文本按 CharCluster 分组
-    /// - 每个 cluster 用 swash Shaper 处理
-    /// - 收集 glyph_id + advance + cluster
+    /// 借鉴 swash 0.1.19 的 `Shaper::add_str` + `shape_with` 模式:
+    /// - Shaper 内部按 CharCluster 分组并处理
+    /// - shape_with 回调每个 GlyphCluster
+    /// - 收集 glyph_id + advance + cluster（即 source range）
     ///
     /// `font`:swash FontRef（来自 FontMatcher::font_ref）
     /// `size`:字号（ppem,像素）
     pub fn shape(&mut self, font: &FontRef<'_>, text: &str, size: f32) -> Vec<ShapedGlyph> {
         let mut shaper = self
             .ctx
-            .builder(font)
+            .builder(font.clone())
             .size(size)
             .build();
 
+        shaper.add_str(text);
         let mut result: Vec<ShapedGlyph> = Vec::new();
-        let chars: Vec<char> = text.chars().collect();
-        let mut cluster = CharCluster::default();
-
-        let mut char_iter = chars.iter().enumerate();
-        while let Some((idx, &c)) = char_iter.next() {
-            let status = cluster.push(idx, c as u32);
-            // 当 cluster 完成或无法继续接收字符时,shape 它
-            if matches!(status, Status::Complete) || matches!(status, Status::Full) {
-                shape_cluster(&mut shaper, &cluster, &mut result, c);
-                cluster.reset();
+        shaper.shape_with(|gc| {
+            for glyph in gc.glyphs.iter() {
+                result.push(ShapedGlyph {
+                    glyph_id: glyph.id,
+                    advance: glyph.advance,
+                    // glyph 在 GlyphCluster 中没有直接 cluster 字段;
+                    // 用 source.start 作为逻辑 cluster id。
+                    cluster: gc.source.start,
+                    // 单字符 cluster 的 source_char 取自首字符（utf8 解码）。
+                    // 这里简化为：取 source 起始处的一个 char。
+                    source_char: source_range_first_char(gc.source, text),
+                });
             }
-        }
-        // 处理剩余未完成的 cluster
-        if !cluster.is_empty() {
-            if let Some((_, &last_char)) = char_iter.last().or(Some((chars.len() - 1, &'\0'))) {
-                shape_cluster(&mut shaper, &cluster, &mut result, last_char);
-            }
-        }
-
+        });
         result
     }
 }
 
-/// 对单个 CharCluster 执行 shaping 并收集结果
-fn shape_cluster(
-    shaper: &mut swash::shape::Shaper<'_>,
-    cluster: &CharCluster,
-    result: &mut Vec<ShapedGlyph>,
-    source_char: char,
-) {
-    shaper.add_cluster(cluster);
-    shaper.shape_with(|gc| {
-        for glyph in gc.glyphs.iter() {
-            result.push(ShapedGlyph {
-                glyph_id: glyph.id,
-                advance: glyph.advance,
-                cluster: glyph.cluster,
-                source_char,
-            });
-        }
-    });
+/// 从 GlyphCluster 的 SourceRange（utf8 字节偏移）反解首字符。
+///
+/// swash `SourceRange { start, end }` 是字节偏移;我们按 `start` 切片 utf8
+/// 取第一个 char。文本为空或越界时返回 `'\0'`。
+fn source_range_first_char(range: swash::text::cluster::SourceRange, text: &str) -> char {
+    let start = range.start as usize;
+    if start >= text.len() {
+        return '\0';
+    }
+    text[start..].chars().next().unwrap_or('\0')
 }
 
 /// 字号 → 像素换算（DPI 感知）
