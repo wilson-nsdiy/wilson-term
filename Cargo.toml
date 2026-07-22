@@ -1,0 +1,29 @@
+[workspace]
+members = ["src-tauri", "terminal-core"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.77"
+
+[workspace.dependencies]
+# 终端核心：VT 解析、字形、布局、字体
+swash = "0.1"
+fontdb = "0.20"
+guillotiere = "0.6"
+cosmic-text = "0.12"
+vtparse = "0.7"
+
+# 渲染：wgpu + winit（阶段 2 引入，此处先声明）
+wgpu = "24"
+winit = "0.30"
+
+# 配置热重载
+notify = "7"
+toml = "0.8"
+
+# 通用
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+parking_lot = "0.12"

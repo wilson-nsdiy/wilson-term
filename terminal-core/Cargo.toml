@@ -1,0 +1,37 @@
+[package]
+name = "terminal-core"
+version = "0.0.1"
+description = "Wilson Term 终端核心：VT 解析、序列语义、终端状态机"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# 终端核心：VT 解析、字形、布局、字体
+swash = "0.1"
+fontdb = "0.20"
+guillotiere = "0.6"
+cosmic-text = "0.12"
+vtparse = "0.7"
+
+# 配置热重载
+notify = "7"
+toml = "0.8"
+
+# 通用
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+parking_lot = "0.12"
+
+# vtparse fork 依赖
+utf8parse = "0.2"
+heapless = { version = "0.8", optional = true }
+
+[features]
+default = ["std"]
+std = []
+alloc = []
+no_std = ["dep:heapless"]
+
+[dev-dependencies]
+k9 = "0.4"
