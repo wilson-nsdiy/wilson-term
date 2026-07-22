@@ -63,25 +63,42 @@ impl<'a> Performer<'a> {
         }
         let text = std::mem::take(&mut self.print);
 
-        // 写屏（占位:实际 screen 缓冲区在阶段 1.3 第三步实现）
-        // 当前只记录光标位置变化,不实际写入屏幕缓冲区
+        // 写屏（阶段 4：接入真实 Screen 缓冲区）
+        let cols = self.state.cols as usize;
+        let rows = self.state.rows as u32;
+        // 画笔 snapshot,避免借用冲突
+        let pen_cell = self.pen_to_cell();
+        let screen = self.state.screens.current();
+
         for c in text.chars() {
             let width = char_width(c);
 
             if self.state.mode.contains(crate::state::modes::TermMode::WRAP_NEXT) {
-                // 行尾自动换行
+                // 行尾自动换行（上一字符已填满行尾）
                 self.state.cursor.row += 1;
                 self.state.cursor.col = 0;
                 self.state
                     .mode
                     .remove(crate::state::modes::TermMode::WRAP_NEXT);
+                // 超出屏幕底部 → 滚动
+                if self.state.cursor.row >= rows {
+                    screen.scroll(true, 1);
+                    self.state.cursor.row = rows - 1;
+                }
             }
 
-            // 占位:设置单元格 + 光标右移
-            // 实际在阶段 1.3 第三步调用 screen.set_cell_grapheme()
-            let cols = self.state.cols; // 后期会从 screen 获取
-            if self.state.cursor.col + width >= cols {
-                // 需要换行
+            // 写入当前光标位置
+            screen.set_cell_grapheme(
+                self.state.cursor.col as usize,
+                self.state.cursor.row as usize,
+                &c.to_string(),
+                width,
+                &pen_cell,
+            );
+
+            // 光标右移
+            if self.state.cursor.col as usize + width as usize >= cols {
+                // 行尾：置 WRAP_NEXT（下个字符触发换行）
                 self.state
                     .mode
                     .insert(crate::state::modes::TermMode::WRAP_NEXT);
@@ -89,6 +106,22 @@ impl<'a> Performer<'a> {
                 self.state.cursor.col += width;
             }
         }
+    }
+
+    /// 把当前 `pen`（画笔属性）转为 `Cell` 用于写入屏幕
+    fn pen_to_cell(&self) -> crate::screen::buffer::Cell {
+        use crate::screen::buffer::Cell;
+        let mut cell = Cell::default();
+        cell.foreground = self.state.pen.foreground.clone();
+        cell.background = self.state.pen.background.clone();
+        cell.intensity = self.state.pen.intensity;
+        cell.italic = self.state.pen.italic;
+        cell.underline = self.state.pen.underline;
+        cell.blink = self.state.pen.blink;
+        cell.reverse = self.state.pen.reverse;
+        cell.strike = self.state.pen.strike;
+        cell.hidden = self.state.pen.hidden;
+        cell
     }
 
     /// 主入口:执行一个 `Action`
@@ -169,8 +202,8 @@ impl<'a> Performer<'a> {
             0x0A | 0x0B | 0x0C => {
                 let next_row = self.state.cursor.row + 1;
                 if next_row >= self.state.rows {
-                    // 滚动（占位,阶段 1.3 第三步实现）
-                    // 暂时不改变光标行
+                    // 滚动（阶段 4：接入 Screen）
+                    self.state.screens.current().scroll(true, 1);
                 } else {
                     self.state.cursor.row = next_row;
                 }
@@ -265,22 +298,57 @@ impl<'a> Performer<'a> {
                 self.state.cursor.col = next_tab.min(self.state.cols - 1);
             }
             EraseDisplay(kind) => {
-                // 擦除显示（占位,阶段 1.3 第三步实现）
-                let _ = kind;
+                // 擦除显示（阶段 4：接入 Screen）
+                use crate::escape::csi::EraseKind::*;
+                let k = match kind {
+                    ToEnd => 0u8,
+                    ToStart => 1,
+                    All => 2,
+                    Scrollback => 3,
+                };
+                self.state.screens.current().erase_display(
+                    k,
+                    self.state.cursor.row as usize,
+                    self.state.cursor.col as usize,
+                );
             }
             EraseLine(kind) => {
-                // 擦除行（占位,阶段 1.3 第三步实现）
-                let _ = kind;
+                // 擦除行（阶段 4：接入 Screen）
+                use crate::escape::csi::EraseKind::*;
+                let k = match kind {
+                    ToEnd => 0u8,
+                    ToStart => 1,
+                    All => 2,
+                    Scrollback => 2, // EL 不支持 scrollback,退化为 All
+                };
+                self.state.screens.current().erase_line(
+                    k,
+                    self.state.cursor.row as usize,
+                    self.state.cursor.col as usize,
+                );
             }
-            LineEdit { insert: _, n: _ } => {
-                // 插入/删除行（占位,阶段 1.3 第三步实现）
+            LineEdit { insert, n } => {
+                // 插入/删除行（阶段 4：接入 Screen）
+                let row = self.state.cursor.row as usize;
+                if insert {
+                    self.state.screens.current().insert_lines(n, row);
+                } else {
+                    self.state.screens.current().delete_lines(n, row);
+                }
             }
-            CharEdit { insert: _, n: _ } => {
-                // 插入/删除字符（占位,阶段 1.3 第三步实现）
+            CharEdit { insert, n } => {
+                // 插入/删除字符（阶段 4：接入 Screen）
+                let row = self.state.cursor.row as usize;
+                let col = self.state.cursor.col as usize;
+                if insert {
+                    self.state.screens.current().insert_chars(n, row, col);
+                } else {
+                    self.state.screens.current().delete_chars(n, row, col);
+                }
             }
             Scroll { up, n } => {
-                // 滚动（占位,阶段 1.3 第三步实现）
-                let _ = (up, n);
+                // 滚动（阶段 4：接入 Screen）
+                self.state.screens.current().scroll(up, n);
             }
             SetDecPrivateMode(code) => {
                 self.state.set_dec_private_mode(code);
@@ -472,7 +540,8 @@ impl<'a> Performer<'a> {
                 // IND:索引（光标下移一行,可能滚动）
                 let next_row = self.state.cursor.row + 1;
                 if next_row >= self.state.rows {
-                    // 滚动（占位）
+                    // 滚动（阶段 4：接入 Screen）
+                    self.state.screens.current().scroll(true, 1);
                 } else {
                     self.state.cursor.row = next_row;
                 }
@@ -482,7 +551,8 @@ impl<'a> Performer<'a> {
                 self.state.cursor.col = 0;
                 let next_row = self.state.cursor.row + 1;
                 if next_row >= self.state.rows {
-                    // 滚动（占位）
+                    // 滚动（阶段 4：接入 Screen）
+                    self.state.screens.current().scroll(true, 1);
                 } else {
                     self.state.cursor.row = next_row;
                 }
@@ -843,6 +913,269 @@ mod tests {
                 byte: b'l',
             });
             assert!(!p.state.is_in_synchronized_update());
+        });
+    }
+
+    // ===== 阶段 4 端到端：字节流 → performer → screen buffer =====
+
+    /// 辅助:读取当前光标位置的单元格文本
+    fn cell_text(state: &TerminalState, col: usize, row: usize) -> String {
+        state
+            .screens
+            .current_ref()
+            .line(row)
+            .expect("row exists")
+            .cell(col)
+            .map(|c| c.text.clone())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn test_e2e_print_single_char_writes_screen() {
+        with_performer(|p| {
+            p.perform(Action::Print('A'));
+            p.flush_print();
+            assert_eq!(cell_text(p.state, 0, 0), "A");
+            assert_eq!(p.state.cursor.col, 1);
+        });
+    }
+
+    #[test]
+    fn test_e2e_print_string_writes_screen() {
+        with_performer(|p| {
+            p.perform(Action::PrintString("Hello".to_string()));
+            p.flush_print();
+            assert_eq!(cell_text(p.state, 0, 0), "H");
+            assert_eq!(cell_text(p.state, 1, 0), "e");
+            assert_eq!(cell_text(p.state, 2, 0), "l");
+            assert_eq!(cell_text(p.state, 3, 0), "l");
+            assert_eq!(cell_text(p.state, 4, 0), "o");
+            assert_eq!(p.state.cursor.col, 5);
+        });
+    }
+
+    #[test]
+    fn test_e2e_control_lf_moves_cursor_and_no_scroll() {
+        with_performer(|p| {
+            p.perform(Action::PrintString("AB".to_string()));
+            p.flush_print();
+            // LF:光标下移一行,不滚动（row 0 → row 1）
+            p.perform(Action::Control(0x0A));
+            assert_eq!(cell_text(p.state, 0, 0), "A");
+            assert_eq!(cell_text(p.state, 1, 0), "B");
+            assert_eq!(p.state.cursor.row, 1);
+            assert_eq!(p.state.cursor.col, 2); // LF 不重置 col（CSI 风格）
+        });
+    }
+
+    #[test]
+    fn test_e2e_control_lf_at_bottom_row_triggers_scroll() {
+        with_performer(|p| {
+            // 默认 24 行,先把光标移到最后一行
+            p.state.cursor.row = 23;
+            p.perform(Action::Control(0x0A));
+            // 滚动触发后光标行保持在最后一行
+            assert_eq!(p.state.cursor.row, 23);
+            // 屏幕滚动了一行,首行应变为空（原首行已推入回滚）
+            assert_eq!(cell_text(p.state, 0, 0), "");
+        });
+    }
+
+    #[test]
+    fn test_e2e_control_cr_resets_col() {
+        with_performer(|p| {
+            p.perform(Action::PrintString("XYZ".to_string()));
+            p.flush_print();
+            assert_eq!(p.state.cursor.col, 3);
+            p.perform(Action::Control(0x0D)); // CR
+            assert_eq!(p.state.cursor.col, 0);
+        });
+    }
+
+    #[test]
+    fn test_e2e_control_bs_moves_back() {
+        with_performer(|p| {
+            p.perform(Action::PrintString("AB".to_string()));
+            p.flush_print();
+            p.perform(Action::Control(0x08)); // BS
+            assert_eq!(p.state.cursor.col, 1);
+        });
+    }
+
+    #[test]
+    fn test_e2e_csi_erase_line_to_end() {
+        with_performer(|p| {
+            use crate::parser::vtparse::CsiParam;
+            p.perform(Action::PrintString("Hello".to_string()));
+            p.flush_print();
+            // CHA col=2 (1-based → 0-based col=1),然后 EL 0（光标到行尾）
+            p.perform(Action::CsiDispatch {
+                params: vec![CsiParam::Integer(2)],
+                parameters_truncated: false,
+                byte: b'G', // CHA: col=2
+            });
+            p.perform(Action::CsiDispatch {
+                params: vec![CsiParam::Integer(0)],
+                parameters_truncated: false,
+                byte: b'K', // EL 0
+            });
+            // col 0 应保留,col 1+ 应为空
+            assert_eq!(cell_text(p.state, 0, 0), "H");
+            assert_eq!(cell_text(p.state, 1, 0), "");
+            assert_eq!(cell_text(p.state, 2, 0), "");
+        });
+    }
+
+    #[test]
+    fn test_e2e_csi_erase_display_all() {
+        with_performer(|p| {
+            use crate::parser::vtparse::CsiParam;
+            p.perform(Action::PrintString("Hello".to_string()));
+            p.flush_print();
+            // ED 2:擦除全部
+            p.perform(Action::CsiDispatch {
+                params: vec![CsiParam::Integer(2)],
+                parameters_truncated: false,
+                byte: b'J',
+            });
+            assert_eq!(cell_text(p.state, 0, 0), "");
+            assert_eq!(cell_text(p.state, 1, 0), "");
+        });
+    }
+
+    #[test]
+    fn test_e2e_csi_scroll_up() {
+        with_performer(|p| {
+            use crate::parser::vtparse::CsiParam;
+            p.perform(Action::PrintString("Line0".to_string()));
+            p.flush_print();
+            p.perform(Action::Control(0x0A));
+            p.perform(Action::PrintString("Line1".to_string()));
+            p.flush_print();
+            // SU 1:向上滚动 1 行
+            p.perform(Action::CsiDispatch {
+                params: vec![CsiParam::Integer(1)],
+                parameters_truncated: false,
+                byte: b'S',
+            });
+            // 原 row 0 内容应消失（已推入回滚）
+            assert_eq!(cell_text(p.state, 0, 0), "");
+        });
+    }
+
+    #[test]
+    fn test_e2e_csi_insert_delete_lines() {
+        with_performer(|p| {
+            use crate::parser::vtparse::CsiParam;
+            p.perform(Action::PrintString("Keep".to_string()));
+            p.flush_print();
+            // 移到 row 5,插入 2 行
+            p.perform(Action::CsiDispatch {
+                params: vec![CsiParam::Integer(6)],
+                parameters_truncated: false,
+                byte: b'd', // VPA: row=6 (1-based → 5)
+            });
+            p.perform(Action::CsiDispatch {
+                params: vec![CsiParam::Integer(2)],
+                parameters_truncated: false,
+                byte: b'L', // IL 2
+            });
+            // 原 row 0 内容仍存在
+            assert_eq!(cell_text(p.state, 0, 0), "K");
+            // row 5,6 应为空（新插入的空行）
+            assert_eq!(cell_text(p.state, 0, 5), "");
+            assert_eq!(cell_text(p.state, 0, 6), "");
+        });
+    }
+
+    #[test]
+    fn test_e2e_csi_insert_delete_chars() {
+        with_performer(|p| {
+            use crate::parser::vtparse::CsiParam;
+            p.perform(Action::PrintString("ABCDEF".to_string()));
+            p.flush_print();
+            // 光标到 col=2,ICH 2（插入 2 空字符）
+            p.perform(Action::CsiDispatch {
+                params: vec![CsiParam::Integer(3)],
+                parameters_truncated: false,
+                byte: b'G', // CHA col=3 (1-based → 2)
+            });
+            p.perform(Action::CsiDispatch {
+                params: vec![CsiParam::Integer(2)],
+                parameters_truncated: false,
+                byte: b'@', // ICH 2
+            });
+            // col 0,1 保留,col 2,3 应为空（被插入的空字符挤过来）
+            assert_eq!(cell_text(p.state, 0, 0), "A");
+            assert_eq!(cell_text(p.state, 1, 0), "B");
+            assert_eq!(cell_text(p.state, 2, 0), "");
+            assert_eq!(cell_text(p.state, 3, 0), "");
+            // DCH 2:删除 col 2,3 的字符,后续左移
+            p.perform(Action::CsiDispatch {
+                params: vec![CsiParam::Integer(2)],
+                parameters_truncated: false,
+                byte: b'P', // DCH 2
+            });
+            assert_eq!(cell_text(p.state, 2, 0), "C");
+            assert_eq!(cell_text(p.state, 3, 0), "D");
+        });
+    }
+
+    #[test]
+    fn test_e2e_sgr_then_print_carries_pen() {
+        with_performer(|p| {
+            use crate::parser::vtparse::CsiParam;
+            // SGR 1 (Bold) + 31 (Red)
+            p.perform(Action::CsiDispatch {
+                params: vec![CsiParam::Integer(1), CsiParam::Integer(31)],
+                parameters_truncated: false,
+                byte: b'm',
+            });
+            p.perform(Action::Print('Z'));
+            p.flush_print();
+            // 单元格应携带 Bold + Red 前景色
+            let cell = p
+                .state
+                .screens
+                .current_ref()
+                .line(0)
+                .expect("row exists")
+                .cell(0)
+                .expect("cell exists");
+            assert_eq!(cell.intensity, 1); // Bold
+            // Red = SGR 31 → ColorSpec::Index(1)
+            assert_eq!(cell.foreground, crate::escape::csi::ColorSpec::Index(1));
+        });
+    }
+
+    #[test]
+    fn test_e2e_ind_at_bottom_triggers_scroll() {
+        with_performer(|p| {
+            p.state.cursor.row = 23;
+            p.perform(Action::EscDispatch {
+                params: vec![],
+                intermediates: vec![],
+                ignored_excess_intermediates: false,
+                byte: b'D', // IND
+            });
+            assert_eq!(p.state.cursor.row, 23); // 滚动后保持在最后一行
+        });
+    }
+
+    #[test]
+    fn test_e2e_nel_at_bottom_triggers_scroll() {
+        with_performer(|p| {
+            p.perform(Action::PrintString("X".to_string()));
+            p.flush_print();
+            p.state.cursor.row = 23;
+            p.perform(Action::EscDispatch {
+                params: vec![],
+                intermediates: vec![],
+                ignored_excess_intermediates: false,
+                byte: b'E', // NEL
+            });
+            assert_eq!(p.state.cursor.col, 0);
+            assert_eq!(p.state.cursor.row, 23); // 滚动后保持
         });
     }
 }

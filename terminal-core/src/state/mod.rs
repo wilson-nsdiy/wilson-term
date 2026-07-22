@@ -126,9 +126,19 @@ pub struct TerminalState {
 
     /// 备用屏幕是否激活（wezterm mod.rs:1673-1677）
     ///
-    /// 具体的主屏/备屏缓冲区在 `screen/` 子模块（待办）实现,
-    /// 本字段先记录激活状态,供 performer 在 DEC 47/1047/1049 时切换。
+    /// 具体的主屏/备屏缓冲区在 [`screens`](#structfield.screens) 字段。
+    /// 本字段冗余记录激活状态,供外部快速查询与 DEC 47/1047/1049 切换。
     pub alt_screen_active: bool,
+
+    /// 屏幕缓冲区管理（主屏 + 备屏 + 回滚）
+    ///
+    /// 阶段 1.3 第三步定义的 `ScreenManager`,阶段 4 接入:
+    /// - `flush_print` 写字符 → `screens.current_mut().set_cell_grapheme()`
+    /// - LF/IND/NEL 滚动 → `screens.current_mut().scroll(true, 1)`
+    /// - ED/EL/IL/DL/ICH/DCH/SU/SD 全部走 `screens.current_mut()` 的对应方法
+    /// - DEC 47/1047/1049 切屏 → `screens.switch_to_alt()` / `switch_to_primary()`
+    /// - `cols`/`rows` 与 `screens` 的物理维度保持一致（resize 同步）
+    pub screens: crate::screen::ScreenManager,
 
     /// 同步更新（BSU/ESU）的起始时间戳
     ///
@@ -157,6 +167,7 @@ impl Default for TerminalState {
             title: String::new(),
             icon_title: None,
             alt_screen_active: false,
+            screens: crate::screen::ScreenManager::new(24, 80),
             synced_update_started_at: None,
         }
     }

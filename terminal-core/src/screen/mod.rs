@@ -29,7 +29,7 @@ const DEFAULT_SCROLLBACK_SIZE: usize = 10000;
 /// - `lines` 是 `VecDeque<Line>`,尾部是可见行,头部是已滚动出去的回滚行
 /// - `phys_row(visible_row)` 将可视行号转为 `lines` 中的物理索引
 /// - `allow_scrollback` 控制是否保留回滚（主屏=true,备屏=false）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Screen {
     /// 所有行数据（回滚 + 可见行）
     lines: VecDeque<Line>,
@@ -388,7 +388,7 @@ impl Screen {
 /// 借鉴 wezterm 的 `ScreenOrAlt` 设计:
 /// 主屏（primary）包含回滚,备屏（alternate）无回滚。
 /// 切换时交换主屏/备屏,但保留原内容。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScreenManager {
     /// 主屏（包含回滚）
     primary: Screen,
