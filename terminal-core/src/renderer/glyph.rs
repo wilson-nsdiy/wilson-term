@@ -134,6 +134,10 @@ impl GlyphCache {
             .allocate(rendered.width, rendered.height)
             .ok()?;
 
+        // 把光栅化位图写入 atlas 像素缓冲区
+        self.atlas_list
+            .write(atlas_id, &sprite, &rendered.data);
+
         // 写入缓存
         let entry = CacheEntry {
             atlas_id,
@@ -156,6 +160,10 @@ impl GlyphCache {
             .atlas_list
             .allocate(rendered.width, rendered.height)
             .ok()?;
+
+        // 把位图写入 atlas 像素缓冲区
+        self.atlas_list
+            .write(atlas_id, &sprite, &rendered.data);
 
         let entry = CacheEntry {
             atlas_id,

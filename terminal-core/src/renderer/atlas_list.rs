@@ -126,6 +126,26 @@ impl AtlasList {
         }
         self.total_allocated_pixels = 0;
     }
+
+    /// 把 RGBA 位图写入指定 atlas 的指定位置
+    ///
+    /// `atlas_id` 来自 `allocate` 返回值的第一个元素。
+    /// `sprite` 来自 `allocate` 返回值的第二个元素。
+    /// `data` 是源位图（RGBA,每像素 4 字节）,尺寸应与 sprite 一致。
+    ///
+    /// 越界或尺寸不匹配时静默忽略。
+    pub fn write(&mut self, atlas_id: usize, sprite: &Sprite, data: &[u8]) {
+        if let Some(atlas) = self.atlases.get_mut(atlas_id) {
+            atlas.write(sprite.x, sprite.y, sprite.width, sprite.height, data);
+        }
+    }
+
+    /// 获取指定 atlas 的像素缓冲区引用
+    ///
+    /// 阶段 6 由 wgpu 上传逻辑 read。
+    pub fn pixels(&self, atlas_id: usize) -> Option<&[u8]> {
+        self.atlases.get(atlas_id).map(|a| a.pixels())
+    }
 }
 
 impl Default for AtlasList {
