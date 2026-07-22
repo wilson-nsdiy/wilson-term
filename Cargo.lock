@@ -6482,6 +6482,7 @@ dependencies = [
  "utf8parse",
  "vtparse",
  "wgpu",
+ "zeno",
 ]
 
 [[package]]

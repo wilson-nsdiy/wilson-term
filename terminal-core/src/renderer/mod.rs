@@ -17,7 +17,9 @@
 
 pub mod atlas;
 pub mod atlas_list;
+pub mod font;
 pub mod glyph;
 pub mod pipeline;
+pub mod raster;
 pub mod shader;
 pub mod sync;
