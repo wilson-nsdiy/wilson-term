@@ -1,0 +1,19 @@
+[package]
+name = "wilson-renderer"
+version = "0.0.1"
+description = "Wilson Term 渲染管线：wgpu 着色器 + 终端核心桥接"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# 终端核心
+terminal-core = { path = "../terminal-core" }
+
+# 渲染
+wgpu = { workspace = true }
+
+# 通用
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
