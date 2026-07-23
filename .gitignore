@@ -1,16 +1,6 @@
-# Dependencies
-node_modules/
-
 # Build output
+target/
 dist/
-out/
-
-# Tauri
-src-tauri/target/
-src-tauri/gen/
-
-# electron-vite (legacy)
-release/
 
 # IDE
 .vscode/
@@ -31,26 +21,6 @@ Thumbs.db
 # Logs
 logs/
 *.log
-npm-debug.log*
-
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage
-coverage/
-
-# Temporary files
-*.tmp
-*.bak
-*.patch
-
-# Plugins
-plugins/*/dist/
-plugins/*/node_modules/
-plugins/*/*.zip
 
 # AI / IDE tool config
 .codegraph/
@@ -58,10 +28,5 @@ plugins/*/*.zip
 .mimocode/
 .codeartsdoer/
 .claude/
-
-# AtomCode config (machine-specific, includes hooks with absolute paths)
 .atomcode/
 .mcp.json
-
-# Rust build output (workspace root)
-target/

@@ -1,9 +1,0 @@
-# 此文件用于配合 rust-toolchain.toml 固定 stable 工具链,
-# 防止 rustup shim 在 tauri dev 子进程环境里回退到旧工具链
-# (如 1.56.0,不支持 --check-cfg,会导致 ff/dashmap 等依赖编译失败)。
-#
-# 早期版本曾在此处写死 rustc 绝对路径(含个人 Windows 用户目录),
-# 但该路径不可移植,无法纳入共享仓库。
-# 现改由 rust-toolchain.toml 的 [toolchain] channel = "stable" 统一约束,
-# 本文件保留为占位与说明,如需在特定机器上强制覆盖 rustc,请改用
-# 环境变量 RUSTC 或本地未跟踪的配置。
