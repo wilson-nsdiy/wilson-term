@@ -221,20 +221,15 @@ impl FontMatcher {
     /// 本方法返回数据的 Vec clone（简化测试,生产可改用闭包）。
     pub fn face_data(&self, id: ID) -> Option<Vec<u8>> {
         let face = self.db.face(id)?;
+        // fontdb 启用了 fs feature,Source::File 变体存在;
+        // SharedFile 仅在 memmap feature 下存在,我们没启用,
+        // 用 _ 兜底。
         match &face.source {
             fontdb::Source::Binary(data) => {
                 let data = data.as_ref();
                 Some(data.as_ref().to_vec())
             }
-            #[cfg(feature = "fs")]
-            fontdb::Source::File(path) => {
-                std::fs::read(path).ok()
-            }
-            #[cfg(all(feature = "fs", feature = "memmap"))]
-            fontdb::Source::SharedFile(_, data) => {
-                let data = data.as_ref();
-                Some(data.as_ref().to_vec())
-            }
+            fontdb::Source::File(path) => std::fs::read(path).ok(),
             _ => None,
         }
     }
@@ -246,16 +241,19 @@ impl FontMatcher {
     /// 需 clone 出 Vec<u8> 以获得 'static 生命周期（简化,生产可优化为 Arc 共享）。
     pub fn font_ref(&self, id: ID) -> Option<OwnedFont> {
         let face = self.db.face(id)?;
+        // fontdb 启用了 fs feature,Source::File 变体存在;
+        // SharedFile 变体仅在 memmap feature 下存在,我们没启用,
+        // 所以不 match 它,用 _ 兜底。
         let data: Vec<u8> = match &face.source {
             fontdb::Source::Binary(data) => data.as_ref().as_ref().to_vec(),
-            #[cfg(feature = "fs")]
             fontdb::Source::File(path) => std::fs::read(path).ok()?,
-            #[cfg(all(feature = "fs", feature = "memmap"))]
-            fontdb::Source::SharedFile(_, data) => data.as_ref().as_ref().to_vec(),
             _ => return None,
         };
         let font = FontRef::from_index(&data, face.index as usize)?;
-        Some(OwnedFont { data, font_offset: face.index })
+        Some(OwnedFont {
+            data,
+            font_offset: face.index,
+        })
     }
 
     /// 列出所有字体家族（去重）
