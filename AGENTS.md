@@ -89,7 +89,7 @@ wilson-term/
 │   │       │   ├── Sidebar.tsx            # 会话管理侧边栏（连接模板列表、右键菜单）
 │   │       │   ├── TabBar.tsx             # 标签栏（类型图标、状态指示灯、关闭按钮）
 │   │       │   ├── Terminal.tsx           # 终端容器（WelcomeTerminal + TerminalInstance）
-│   │       │   ├── TerminalInstance.tsx    # 终端实例核心（xterm.js 管理、数据流绑定、插件、右键菜单）
+│   │       │   ├── TerminalInstance.tsx    # 终端实例核心（xterm.js 管理、数据流绑定、FlowControl/PinnedScroll/RendererManager/ResizeDebouncer 集成、OSC 52 剪贴板、IME leak filter、搜索高亮、多行粘贴、性能监控、右键菜单）
 │   │       │   ├── TerminalStatusBar.tsx  # 终端状态栏（连接信息、插件状态栏项、键盘锁指示器）
 │   │       │   ├── TerminalContextMenu.tsx # 终端右键菜单（复制/粘贴）
 │   │       │   ├── NewConnectDialog.tsx   # 新建/编辑连接对话框（SSH/Telnet/串口/本地终端表单）
@@ -120,7 +120,11 @@ wilson-term/
 │   │       │   ├── logConfig.ts        # 日志配置工具（创建/合并连接级与全局配置）
 │   │       │   ├── settingsResolver.ts # 设置解析工具（Profile 覆盖合并）
 │   │       │   ├── pasteFilter.ts      # 粘贴过滤工具（多行检测/安全过滤）
-│   │       │   └── font.ts            # 字体工具（系统字体列表获取）
+│   │       │   ├── font.ts            # 字体工具（系统字体列表获取）
+│   │       │   ├── imeLeakFilter.ts   # IME 首字漏出过滤器（修复微软拼音等 IME compositionstart 滞后 bug）
+│   │       │   ├── searchMatch.ts     # 搜索匹配信息工具（computeSearchMatchInfo）
+│   │       │   ├── xtermEnhancements.ts  # xterm 性能与体验增强（FlowControl/PinnedScroll/RendererManager/safeFit/patchRenderServiceDimensions）
+│   │       │   └── resizeDebouncer.ts    # 终端 resize 防抖（对齐 VSCode TerminalResizeDebouncer，区分 X/Y + buffer 内容量分级）
 │   │       └── styles/
 │   │           └── globals.css
 │   │   └── plugin-host.ts    # 渲染进程插件宿主：沙箱加载/生命周期/数据流分发
@@ -190,6 +194,10 @@ Zustand 管理所有 UI 状态和会话状态。持久化数据通过 IPC 存储
 - Git
 - Python 3.x（用于编译原生模块）
 - C++ 编译工具链（Windows: Visual Studio Build Tools, macOS: Xcode Command Line Tools）
+
+## 开发约定
+
+- **对齐成熟实现**：当涉及终端渲染、resize 防抖、滚动跟随、渲染器上下文恢复等已被成熟软件解决的问题时，优先参考 VSCode（`/home/ubuntu/github_projects/vscode/src/vs/workbench/contrib/terminal/`）的实现方式——它经过长期生产验证，机制设计（事件触发时机、X/Y 拆维处理、idle callback 兜底等）有很大参考价值。对齐其机制而非自创方案，避免重复踩坑；仅在本地场景差异（如远程 SSH 的 IPC 无背压、中文 IME leak）确实需要时才做最小封装补充。
 
 ## 快速开始
 

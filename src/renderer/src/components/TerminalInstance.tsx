@@ -13,6 +13,7 @@ import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseMo
 import { computeSearchMatchInfo } from '../utils/searchMatch'
 import { createImeLeakFilter, type ImeLeakFilter } from '../utils/imeLeakFilter'
 import { FlowControl, PinnedScroll, RendererManager, patchRenderServiceDimensions, safeFit } from '../utils/xtermEnhancements'
+import { ResizeDebouncer } from '../utils/resizeDebouncer'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
 import TerminalStatusBar from './TerminalStatusBar'
@@ -280,8 +281,16 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     pinnedScroll.attach(terminalRef.current)
     pinnedScrollRef.current = pinnedScroll
 
-    // 加载加速渲染器：优先 WebGL，失败回退 Canvas，再回退 DOM
-    const rendererManager = new RendererManager(xterm, terminalRef.current, resolved.renderer)
+    // 加载加速渲染器：优先 WebGL，失败回退 DOM
+    // renderer 切换后通过 callback 触发 dimensions 刷新 + 滚动恢复——
+    // WebGL 与 DOM renderer 的 cell dimensions 不同，加载成功和 context loss 后都要重新 fit
+    // （对齐 VSCode _onDidRequestRefreshDimensions.fire() 在 _enableWebglRenderer 和 _disposeOfWebglRenderer 两处触发）
+    const rendererManager = new RendererManager(xterm, terminalRef.current, resolved.renderer, () => {
+      safeFit(xtermRef.current, fitAddonRef.current)
+      if (pinnedScrollRef.current?.isPinned) {
+        xtermRef.current?.scrollToBottom()
+      }
+    })
     rendererManager.attach()
     rendererManagerRef.current = rendererManager
 
@@ -372,29 +381,44 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     }
     terminalRef.current.addEventListener('contextmenu', handleContextMenu)
 
-    // 窗口大小变化时自适应（节流 + 保持滚动位置）
-    const RESIZE_MIN_INTERVAL = 32
-    let resizePending = false
-    let lastResize = 0
-    const runResize = () => {
-      resizePending = false
-      lastResize = Date.now()
-      const fit = () => safeFit(xtermRef.current, fitAddon)
-      if (pinnedScrollRef.current) {
-        pinnedScrollRef.current.withScrollPreservation(fit, true)
-      } else {
-        fit()
-      }
+    // 窗口大小变化时自适应（对齐 VSCode TerminalResizeDebouncer）
+    // resize 的 reflow 成本随 buffer 内容增长而暴涨，故按 buffer 内容量分级处理：
+    // 1. buffer 小 → 立即 resize（便宜）
+    // 2. buffer 大 + 不可见 → requestIdleCallback 延迟到窗口空闲
+    // 3. buffer 大 + 可见 → Y 立即（便宜），X debounce 100ms（reflow 贵）
+    // 用 FitAddon.proposeDimensions() 拿 cols/rows，按需 xterm.resize 拆维调用
+    const resizeDebouncer = new ResizeDebouncer({
+      isVisible: () => visible,
+      getXterm: () => xtermRef.current,
+      resizeBoth: (cols, rows) => {
+        xtermRef.current?.resize(cols, rows)
+        if (pinnedScrollRef.current?.isPinned) {
+          xtermRef.current?.scrollToBottom()
+        }
+      },
+      resizeX: (cols) => {
+        const cur = xtermRef.current
+        if (!cur) return
+        cur.resize(cols, cur.rows)
+        if (pinnedScrollRef.current?.isPinned) {
+          cur.scrollToBottom()
+        }
+      },
+      resizeY: (rows) => {
+        const cur = xtermRef.current
+        if (!cur) return
+        cur.resize(cur.cols, rows)
+        // Y resize 不触发 reflow，滚动位置不受扰动，无需恢复
+      },
+    })
+    const proposeResize = (): { cols: number; rows: number } | null => {
+      const proposed = fitAddon.proposeDimensions()
+      if (!proposed || proposed.cols < 1 || proposed.rows < 1) return null
+      return { cols: proposed.cols, rows: proposed.rows }
     }
     const handleResize = () => {
-      if (resizePending) return
-      resizePending = true
-      const wait = Math.max(0, RESIZE_MIN_INTERVAL - (Date.now() - lastResize))
-      if (wait > 0) {
-        setTimeout(() => requestAnimationFrame(runResize), wait)
-      } else {
-        requestAnimationFrame(runResize)
-      }
+      const dims = proposeResize()
+      if (dims) resizeDebouncer.resize(dims.cols, dims.rows)
     }
     window.addEventListener('resize', handleResize)
 
@@ -406,12 +430,10 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     const xtermElement = xterm.element
 
     const handleCompositionEnd = () => {
-      // IME 组合结束后 fit，保持滚动位置与其他 fit 路径一致
-      const fit = () => safeFit(xtermRef.current, fitAddon)
-      if (pinnedScrollRef.current) {
-        pinnedScrollRef.current.withScrollPreservation(fit, true)
-      } else {
-        fit()
+      // IME 组合结束后 fit，pinned 则滚到底部
+      safeFit(xtermRef.current, fitAddon)
+      if (pinnedScrollRef.current?.isPinned) {
+        xtermRef.current?.scrollToBottom()
       }
     }
     xtermElement?.addEventListener('compositionend', handleCompositionEnd)
@@ -420,6 +442,10 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       window.removeEventListener('resize', handleResize)
       xtermElement?.removeEventListener('compositionend', handleCompositionEnd)
       terminalRef.current?.removeEventListener('contextmenu', handleContextMenu)
+      // 先 flush 确保 pending resize 生效，再 dispose 取消所有 timer，
+      // 避免 pending 回调在 xterm.dispose() 后访问已销毁的 buffer
+      try { resizeDebouncer.flush() } catch { /* xterm 已销毁时 flush �静默 */ }
+      resizeDebouncer.dispose()
       selectionChangeDisposable.dispose()
       unbindData()
 
@@ -590,12 +616,10 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       requestAnimationFrame(() => {
         // 标签页重新可见时恢复可能丢失的 GPU 渲染器上下文
         rendererManagerRef.current?.reactivate()
-        // fit 并保持滚动位置（pinnedScroll 不可用时仍保证 fit 执行）
-        const fit = () => safeFit(xtermRef.current, fitAddonRef.current)
-        if (pinnedScrollRef.current) {
-          pinnedScrollRef.current.withScrollPreservation(fit, true)
-        } else {
-          fit()
+        // fit，pinned 则滚到底部
+        safeFit(xtermRef.current, fitAddonRef.current)
+        if (pinnedScrollRef.current?.isPinned) {
+          xtermRef.current?.scrollToBottom()
         }
         xtermRef.current?.focus()
       })
@@ -619,12 +643,10 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     if (xterm.options.theme) {
       xterm.options.theme = { ...xterm.options.theme, background: r.backgroundImage ? '#00000000' : r.background, foreground: r.foreground }
     }
-    // 字体变化会改变单元尺寸，fit 时保持滚动位置（pinnedScroll 不可用时仍保证 fit 执行）
-    const fit = () => safeFit(xtermRef.current, fitAddonRef.current)
-    if (pinnedScrollRef.current) {
-      pinnedScrollRef.current.withScrollPreservation(fit, true)
-    } else {
-      fit()
+    // 字体变化会改变单元尺寸，fit，pinned 则滚到底部
+    safeFit(xtermRef.current, fitAddonRef.current)
+    if (pinnedScrollRef.current?.isPinned) {
+      xtermRef.current?.scrollToBottom()
     }
   }, [settings.fontSize, settings.fontFamily, settings.fontWeight, settings.fontWeightBold, settings.lineHeight, settings.letterSpacing, settings.cursorStyle, settings.cursorBlink, settings.scrollback, settings.background, settings.foreground, sessionProfileId, sessionOverrides, profiles])
 
@@ -673,8 +695,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
         if (rendererStats && rendererStats.contextLossEvents > prevContextLoss) {
           console.warn('[性能监控] GPU 渲染器上下文丢失', {
             本轮新增: rendererStats.contextLossEvents - prevContextLoss,
-            当前渲染器: rendererStats.activeRenderer,
-            恢复尝试: rendererStats.recoveryAttempts
+            当前渲染器: rendererStats.activeRenderer
           })
         }
         prevContextLoss = rendererStats?.contextLossEvents ?? prevContextLoss
