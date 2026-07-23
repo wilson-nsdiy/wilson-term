@@ -165,12 +165,15 @@ fn render_glyph(
     // 3. OwnedFont → swash FontRef
     let font_ref = owned.font_ref()?;
 
-    // 4. 光栅化
-    //    glyph_id 来自 GlyphKey.codepoint → cmap 查找,但 GlyphKey 当前
-    //    只存 codepoint 不存 glyph_id。简化处理:直接把 codepoint 当作
-    //    glyph_id 传（仅适用于 Identity cmap 的字体）。
-    //    生产应在此处加一层 cmap 查找（swash FontRef::cmap）。
-    let glyph_id = key.codepoint as u16;
+    // 4. cmap 查找:codepoint → glyph_id
+    //    swash Charmap::map 返回 GlyphId(= u16),值为 0 表示 .notdef
+    //    (字体里不存在该码点的映射)。按字体惯例返回 None,
+    //    让 GlyphCache 视为光栅化失败,上层走回退链或显示方框。
+    let charmap = swash::Charmap::from_font(&font_ref);
+    let glyph_id = charmap.map(key.codepoint);
+    if glyph_id == 0 {
+        return None;
+    }
 
     let ppem = key.font_size_100 as f32 / 100.0;
     let req = RasterRequest::new(font_ref, glyph_id, ppem)
@@ -236,5 +239,54 @@ mod tests {
         assert!(result.is_none());
         // family_ids 不应被填充（query 返回 None 时不缓存）
         assert!(family_ids.is_empty());
+    }
+
+    /// Smoke 测试:走完整 cmap 查找 + 光栅化链路
+    ///
+    /// 需要系统字体存在,标注 `#[ignore]` 避免在无字体环境(如 CI 容器)失败。
+    /// 手动运行:`cargo test --lib -- --ignored test_render_glyph_cmap_lookup`
+    ///
+    /// 验证点:
+    /// 1. `render_glyph` 用 swash `Charmap::map` 查找 glyph_id(非 Identity cmap 假设)
+    /// 2. 找到字形后能走完 `Rasterizer::rasterize` 链路返回 `RenderedGlyph`
+    /// 3. `family_ids` 缓存被正确填充
+    #[test]
+    #[ignore]
+    fn test_render_glyph_cmap_lookup() {
+        use std::collections::HashMap;
+
+        let mut matcher = FontMatcher::empty();
+        matcher.load_system_fonts();
+
+        // 找一个系统里确实存在的字体家族
+        let families = matcher.families();
+        let family = families
+            .iter()
+            .find(|f| !f.is_empty())
+            .cloned()
+            .expect("系统应至少有一个字体家族");
+
+        let mut fonts = HashMap::new();
+        let mut family_ids = HashMap::new();
+        let mut rasterizer = Rasterizer::new();
+
+        let key = GlyphKey {
+            font_family: family.clone(),
+            codepoint: 'A',
+            weight: 400,
+            italic: false,
+            font_size_100: 1400,
+            is_color: false,
+        };
+
+        let result =
+            render_glyph(&key, &matcher, &mut fonts, &mut family_ids, &mut rasterizer);
+
+        // 系统字体存在,'A' 是基本 ASCII,几乎所有字体都包含
+        assert!(result.is_some(), "系统字体 {family} 应能光栅化 'A'");
+        let glyph = result.unwrap();
+        assert!(glyph.width > 0 || glyph.height > 0, "光栅化位图不应为空");
+        // family_ids 缓存应被填充
+        assert_eq!(family_ids.len(), 1);
     }
 }
