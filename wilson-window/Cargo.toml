@@ -1,0 +1,17 @@
+[package]
+name = "wilson-window"
+version = "0.0.1"
+description = "Wilson Term 窗口管理：winit 多窗口 + wgpu Surface"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# 渲染：wgpu + winit
+wgpu = { workspace = true }
+winit = { workspace = true }
+
+# 通用
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }

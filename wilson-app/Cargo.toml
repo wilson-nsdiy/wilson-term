@@ -1,0 +1,28 @@
+[package]
+name = "wilson-app"
+version = "0.0.1"
+description = "Wilson Term 顶层应用：组装 window + renderer + terminal-core"
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "wilson-term"
+path = "src/main.rs"
+
+[dependencies]
+# 内部 crate
+wilson-window = { path = "../wilson-window" }
+wilson-renderer = { path = "../wilson-renderer" }
+terminal-core = { path = "../terminal-core" }
+
+# 渲染
+wgpu = { workspace = true }
+winit = { workspace = true }
+
+# 异步运行时（wgpu 异步初始化）
+futures = "0.3"
+env_logger = "0.11"
+
+# 通用
+anyhow = { workspace = true }
+log = { workspace = true }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["terminal-core"]
+members = ["terminal-core", "wilson-window", "wilson-renderer", "wilson-app"]
 resolver = "2"
 
 [workspace.package]
