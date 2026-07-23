@@ -63,9 +63,28 @@ body,
   background-color: var(--term-bg, #1e1e2e);
 }
 
-/* IME composition 文本约束在光标到右边缘之间，防止向右溢出导致页面左移（对齐 xterm 7.0 #5747）
-   注意: 不能用 direction:rtl，否则组合文本会反向显示（#5760），JS 侧 maxWidth 已足够防溢出 */
+/*
+ * IME 组合文本定位修复。
+ *
+ * 现象：微软拼音等中文 IME，当光标靠近终端左侧时，组合文本（拼音字母 + 候选框）
+ * 显示在终端右边缘、远离光标的位置；光标在右侧时反而正常。
+ *
+ * 根因：xterm.js CompositionHelper.updateCompositionElements 给 .composition-view
+ * 设置了 `direction: rtl`（上游为让长组合字符串从右往左换行，issue #5747）。
+ * RTL 会让 composition-view 内的文本右对齐到视图右边缘——也就是终端右边缘。
+ * 光标在左侧时 maxWidth 约等于全终端宽度，文本被推到右边缘，远离光标；
+ * 光标在右侧时 maxWidth 很小，文本在小窗口内右对齐，恰好贴近光标，故"无问题"。
+ *
+ * 修复：强制 composition-view 文本为 LTR 并左对齐。xterm.js 已把 .composition-view
+ * 的 left 定位在光标 x、并把 maxWidth 限制为"光标到右边缘"，左对齐即可让组合文本
+ * 从光标位置开始往右展开，与 Windows Terminal、VS Code 编辑器等一致。
+ * 不修改 direction（仍由 xterm.js 控制），避免与上游渲染逻辑冲突。
+ */
 .xterm .composition-view {
-  overflow: hidden;
+  /* !important 用于覆盖 xterm.js CompositionHelper.updateCompositionElements
+     设置的行内 direction:rtl，避免光标在左侧时组合文本被推到终端右边缘 */
+  direction: ltr !important;
+  text-align: left;
   white-space: nowrap;
+  overflow: hidden;
 }

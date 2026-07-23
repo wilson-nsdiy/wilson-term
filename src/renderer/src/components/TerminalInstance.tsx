@@ -398,28 +398,12 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     }
     window.addEventListener('resize', handleResize)
 
-    // composition 光标靠右溢出修复（对齐 xterm 7.0 官方 #5747）：overflow/direction:rtl 在 CSS，MO 补动态 maxWidth
+    // 不对 .composition-view 做自定义 maxWidth/overflow 修复：
+    // xterm.js 6.1 的 CompositionHelper.updateCompositionElements 已正确处理
+    // 定位与 maxWidth（cols * cellWidth - cursorLeft），自定义逻辑会因 .xterm 的
+    // 4px padding 偏移导致 maxWidth 计算错误，使 IME 候选框/组合文本显示在错误位置。
+    // VS Code 终端零 composition 代码、完全委托 xterm.js，也是因此无此问题。
     const xtermElement = xterm.element
-    const compositionView = xtermElement?.querySelector<HTMLElement>('.composition-view')
-
-    const constrainComposition = () => {
-      if (!xtermElement || !compositionView) return
-      const cs = getComputedStyle(xtermElement)
-      const availWidth =
-        xtermElement.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
-      if (availWidth <= 0) return
-      const currentLeft = parseFloat(compositionView.style.left) || 0
-      const maxWidth = availWidth - currentLeft
-      if (maxWidth > 0) {
-        compositionView.style.maxWidth = `${maxWidth}px`
-      }
-    }
-
-    // xterm 在 compositionupdate 时同步定位并 setTimeout 递归一次；MO 在每次重定位后（绘制前）补设 maxWidth
-    const compositionMo = compositionView
-      ? new MutationObserver(() => constrainComposition())
-      : null
-    compositionMo?.observe(compositionView, { attributes: true, attributeFilter: ['style'] })
 
     const handleCompositionEnd = () => {
       // IME 组合结束后 fit，保持滚动位置与其他 fit 路径一致
@@ -435,7 +419,6 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     return () => {
       window.removeEventListener('resize', handleResize)
       xtermElement?.removeEventListener('compositionend', handleCompositionEnd)
-      compositionMo?.disconnect()
       terminalRef.current?.removeEventListener('contextmenu', handleContextMenu)
       selectionChangeDisposable.dispose()
       unbindData()
