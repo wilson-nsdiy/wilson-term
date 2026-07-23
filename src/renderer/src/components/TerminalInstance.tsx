@@ -11,6 +11,7 @@ import { resolveSettings } from '../utils/settingsResolver'
 import { buildFontFamily } from '../utils/font'
 import { filterPasteText, shouldWarnMultiLinePaste, countPasteLines, isVtMouseModeEnabled } from '../utils/pasteFilter'
 import { computeSearchMatchInfo } from '../utils/searchMatch'
+import { createImeLeakFilter, type ImeLeakFilter } from '../utils/imeLeakFilter'
 import { FlowControl, PinnedScroll, RendererManager, patchRenderServiceDimensions, safeFit } from '../utils/xtermEnhancements'
 import { rendererPluginHost } from '@renderer/plugin-host.ts'
 import TerminalContextMenu from './TerminalContextMenu'
@@ -59,6 +60,12 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   const statusUnsubscribeRef = useRef<(() => void) | null>(null)
   /** 断开后重连输入监听的销毁函数 */
   const reconnectDisposableRef = useRef<{ dispose: () => void } | null>(null)
+  /**
+   * IME 首字母漏出过滤器实例（修复微软拼音等 IME 在 xterm.js 上游的
+   * compositionstart 滞后 bug，详见 utils/imeLeakFilter.ts）。
+   * 在 bindConnection 的 onData 回调中替代直接 connection.write。
+   */
+  const imeLeakFilterRef = useRef<ImeLeakFilter | null>(null)
   /**
    * 持有最新的 bindConnection，使绑定 effect 只依赖 sessionId。
    * 这样即使 bindConnection 引用变化也不会触发解绑→重绑（避免重复订阅 onData/onStatus
@@ -150,8 +157,11 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       // 用户输入意味着结束回看、准备查看新输出，立即跟随底部，
       // 后续远端回显与命令输出即可自动滚到底部。
       pinnedScrollRef.current?.onUserInput()
-      rendererPluginHost.feedInput(sid, data)
-      window.api.connection.write(sid, data)
+      // 通过 IME 首字母漏出过滤器写入，修复微软拼音等 IME 在 xterm.js 上游
+      // 的 compositionstart 滞后 bug（详见 utils/imeLeakFilter.ts）。
+      // 注意：feedInput 也必须走 onFlush，否则被丢弃的 IME 漏出字母仍会到达插件，
+      // 导致插件输入流与远端写入流不一致。
+      imeLeakFilterRef.current?.feed(data)
     })
     inputDisposableRef.current = inputDisposable
 
@@ -467,9 +477,24 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     const currentSession = useAppStore.getState().sessions.find((s) => s.id === sessionId)
     if (!currentSession) return
 
+    // 创建 IME 首字母漏出过滤器（修复微软拼音等 IME 的 compositionstart 滞后 bug）
+    // isComposing 探测 xterm 内部 CompositionHelper.isComposing 状态，
+    // 该状态在 compositionstart 事件触发时同步翻转。
+    // onFlush 同时写入远端和分发到插件宿主，确保两条数据流看到的是同一份过滤后数据
+    // （被丢弃的 IME 漏出字母不会到达任一流）。
+    imeLeakFilterRef.current = createImeLeakFilter({
+      isComposing: () => Boolean((xterm as any)._core?._compositionHelper?.isComposing),
+      onFlush: (data) => {
+        rendererPluginHost.feedInput(currentSession.id, data)
+        window.api.connection.write(currentSession.id, data)
+      }
+    })
+
     bindConnectionRef.current(currentSession.id, xterm)
 
     return () => {
+      imeLeakFilterRef.current?.dispose()
+      imeLeakFilterRef.current = null
       unbindData()
     }
   }, [sessionId]) // 仅在 sessionId 变化时重新绑定；bindConnection 通过 ref 访问，引用变化不触发重绑

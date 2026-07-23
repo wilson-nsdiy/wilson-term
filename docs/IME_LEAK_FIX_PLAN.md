@@ -1,25 +1,104 @@
 # IME 首字母漏出修复方案
 
-> **状态：已回退（2026-07-21，commit `f100c86`）**
+> **状态：已修复（2026-07-23，方案 D "宏任务延迟判定"）**
 >
-> 方案 C 已实现并合入，但实测发现严重副作用：`imeLeakFilter` 对**所有**单 ASCII
-> 字母做 3 秒暂存等待 CJK，导致普通英文输入也被延迟——表现为当前字符不显示、
-> 只显示上一个字符，连续打字体验崩溃。
+> 微软拼音 IME 首字母漏出 bug（输入 `tijiao` 远端收到 `t提交`）已通过方案 D 修复。
+> 实现位于 `src/renderer/src/utils/imeLeakFilter.ts` 与
+> `src/renderer/src/components/TerminalInstance.tsx` 的 `onData` 回调。
 >
-> 根因在于方案 C 的设计缺陷：判定模式 `[a-zA-Z]` 覆盖面太广，无法区分"真英文
-> 输入"与"IME 首字母漏出"，3s 暂存窗口对前者造成不可接受延迟。commit `f100c86`
-> 删除 `src/renderer/src/utils/imeLeakFilter.ts` 与 `TerminalInstance.tsx` 中的
-> 接入点，恢复直接 `window.api.connection.write`。
->
-> **当前立场**：
->
-> - 微软拼音 IME 首字母漏出 bug（输入 `tijiao` 远端收到 `t提交`）**重新出现**，
->   项目暂时接受此 bug 存在。
-> - 不再考虑方案 C 的"onData 出口暂存"路线。
-> - 待后续探索更精准的方案：方向是 **keydown 阶段同步判定**（参考 WezTerm macOS
->   的 `ImmeDisposition` 状态机，或在 `compositionstart` 后用 `isComposing` 反向
->   标记首字母），避免对正常英文路径产生任何副作用。
-> - 若有人按本文档重新实现方案 C，**务必先阅读本回顾小节**，避免重复踩坑。
+> 方案 C（onData 出口 3 秒暂存）已回退，详见下方"已回退方案"小节。
+> 方案 D 取代方案 C，核心区别：**用单个宏任务（setTimeout(0)）替代 3 秒暂存**，
+> 正常英文输入几乎无感（延迟 ≤1ms），仅当 `compositionstart` 在窗口内触发时
+> 丢弃首字母。
+
+## 方案 D：宏任务延迟判定（当前实现）
+
+### 核心思路
+
+在 `xterm.onData` 出口拦截"可能启动 IME"的单 ASCII 字母（`[a-zA-Z]`），
+延迟一个宏任务（`setTimeout(0)`）后检查 `xterm._core._compositionHelper.isComposing`：
+
+- 若 `isComposing === true`（`compositionstart` 已在窗口内触发）→ 说明是 IME
+  首字母漏出，**丢弃该字母**，等待 `compositionend` 后由 IME 正常发出中文词组。
+- 若 `isComposing === false`（`compositionstart` 未触发）→ 是真英文输入，
+  **立即写出**，延迟仅为一个宏任务周期（≤1ms，肉眼不可察）。
+
+### 与方案 C 的关键区别
+
+| 维度 | 方案 C（已回退） | 方案 D（当前） |
+|------|-----------------|----------------|
+| 暂存窗口 | 3000ms | 单个宏任务（~1ms） |
+| 判定信号 | 紧接收到 CJK 字符 | `compositionHelper.isComposing` 同步状态 |
+| 正常英文延迟 | 3 秒（体验崩溃） | ≤1ms（无感） |
+| 误判风险 | 高（3s 窗口内任何 CJK 都触发） | 极低（仅当 `compositionstart` 真触发） |
+| 实现位置 | `onData` 出口过滤 | `onData` 出口过滤（同位置，不同逻辑） |
+
+### 实现文件
+
+#### `src/renderer/src/utils/imeLeakFilter.ts`
+
+独立工具，导出 `createImeLeakFilter(options)` 工厂函数。接口：
+
+```typescript
+export interface ImeLeakFilterOptions {
+  /** 判定 IME 是否正在组合的函数（xterm 内部 compositionHelper.isComposing） */
+  isComposing: () => boolean
+  /** 实际写入远端的回调 */
+  onFlush: (data: string) => void
+}
+
+export interface ImeLeakFilter {
+  feed(data: string): void   // 喂入 onData 收到的 data
+  flush(): void              // 强制 flush 暂存的 pendingLetter
+  dispose(): void            // 销毁：清理定时器，flush 暂存内容
+}
+```
+
+核心逻辑：
+
+1. `feed(data)` 收到 `data.length === 1 && /[a-zA-Z]/` → 先 flush 旧的暂存字母，
+   再暂存新字母，安排 `setTimeout(0)` 延迟检查。
+2. 延迟回调中：`isComposing() === true` → 丢弃（IME 漏出）；
+   否则 → `flushPending()` 立即写出。
+3. `feed(data)` 收到非候选首字母 → 先 flush 暂存的字母，再透传当前 `data`。
+
+#### `src/renderer/src/components/TerminalInstance.tsx`
+
+集成点：
+
+1. **导入与 ref**：`imeLeakFilterRef` 持有 filter 实例。
+2. **bind effect**（`useEffect([sessionId])`）：创建 filter 实例，
+   `isComposing` 探测 `(xterm as any)._core?._compositionHelper?.isComposing`，
+   `onFlush` 调用 `window.api.connection.write(sid, data)`。
+3. **onData 回调**（`bindConnection` 内）：替代直接 `connection.write`，
+   改为 `imeLeakFilterRef.current?.feed(data)`。
+4. **生命周期**：bind effect 的 cleanup 中 `dispose()` filter 实例。
+
+### 单元测试
+
+`src/renderer/src/utils/imeLeakFilter.test.mjs` 覆盖 16 个场景：
+
+- IME 漏出（单字母 + compositionstart 触发）→ 丢弃字母
+- 真英文连续输入（t,e,s,t）→ 全部透传，无延迟
+- 单字母后接非 CJK / 回车 / 控制序列 → 透传字母 + 后续
+- 多字符首帧 / 粘贴多行 → 立即透传
+- 紧接 CJK 后再接 ASCII（提交 + x + 修改）→ 漏出字母被丢弃，中文透传
+- 慢 IME 选字（compositionstart 延迟触发）→ 透传字母
+- CJK 范围扩展（罕用 CJK Ext B 字符 𠀀）→ 透传
+- 数字键 / 标点键不触发暂存 → 立即透传
+- flush 强制刷新 / dispose 后 feed 无效
+
+运行：`node --test src/renderer/src/utils/imeLeakFilter.test.mjs`
+
+### 风险与缓解
+
+| 风险 | 缓解措施 |
+|------|----------|
+| `isComposing` 探测路径依赖 xterm 内部私有字段 `_core._compositionHelper` | xterm 升级时需验证路径仍有效；路径断裂时 filter 退化为"始终透传"（不丢字母），不会导致字符丢失 |
+| 微任务 vs 宏任务时序：`compositionstart` 可能在 `setTimeout(0)` 之后触发 | 本方案用 `setTimeout(0)`（宏任务）而非 `queueMicrotask`，给 `compositionstart` 留出更宽的触发窗口；若实测仍有漏判，可增大窗口至 `setTimeout(…, 10)` |
+| 某些 IME（搜狗/谷歌拼音）的 `compositionstart` 时序不同 | 本方案对 IME 类型不敏感——只要 `compositionstart` 在宏任务窗口内触发就生效 |
+
+---
 
 ## 问题现象
 
