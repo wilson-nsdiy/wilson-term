@@ -59,8 +59,45 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   const inputDisposableRef = useRef<{ dispose: () => void } | null>(null)
   /** 连接状态监听的取消函数 */
   const statusUnsubscribeRef = useRef<(() => void) | null>(null)
-  /** 断开后重连输入监听的销毁函数 */
-  const reconnectDisposableRef = useRef<{ dispose: () => void } | null>(null)
+  /**
+   * R 键重连重入守卫：triggerReconnect 入口同步置位，
+   * doConnect settle 后清零，防止快速连按 R 触发并发重连链路。
+   */
+  const reconnectingRef = useRef(false)
+
+  /**
+   * VSCode `_register(disposable)` 风格的防御性替换：
+   * 覆盖 disposable ref 前先 dispose 旧值。
+   *
+   * VSCode 用 DisposableStore 自动管理生命周期，不存在"覆盖 ref 时丢弃旧 disposable"
+   * 的 bug 类别。wilson-term 用 ref 持有 disposable，必须在覆盖前显式清理旧值，
+   * 否则旧 xterm.onData / window.api.connection.onData listener 会残留，
+   * 导致用户输入被双发、PTY 回显两次。
+   *
+   * 在 StrictMode 双 setup 序列、React 18 concurrent 重渲染、绑定 effect
+   * 在没有 intervening cleanup 的情况下被连续调用等场景下，
+   * 这层防御确保旧 listener 必被 dispose。
+   */
+  const safeSetDisposable = (
+    ref: React.MutableRefObject<{ dispose: () => void } | null>,
+    next: { dispose: () => void }
+  ): void => {
+    if (ref.current && ref.current !== next) {
+      try { ref.current.dispose() } catch { /* 已随 xterm.dispose() 销毁 */ }
+    }
+    ref.current = next
+  }
+
+  /** safeSetDisposable 的裸取消函数版本 */
+  const safeSetUnsubscribe = (
+    ref: React.MutableRefObject<(() => void) | null>,
+    next: () => void
+  ): void => {
+    if (ref.current && ref.current !== next) {
+      try { ref.current() } catch { /* listener 已移除 */ }
+    }
+    ref.current = next
+  }
   /**
    * IME 首字母漏出过滤器实例（修复微软拼音等 IME 在 xterm.js 上游的
    * compositionstart 滞后 bug，详见 utils/imeLeakFilter.ts）。
@@ -73,6 +110,18 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
    * 及中间窗口期数据丢失），与"实际不会变，但确保安全"的注释语义对齐。
    */
   const bindConnectionRef = useRef<(sid: string, xterm: XTerm) => void>(() => {})
+  /**
+   * 状态机分派所需的最新会话状态 ref 集合。
+   *
+   * 对齐 VSCode `terminalInstance.ts` 的 `_handleOnData` —— VSCode 在单一
+   * `xterm.raw.onData` 回调内通过 `processManager` 的当前状态决定是发到 PTY
+   * 还是触发重连。wilson-term 的 sessionStatus 是 React state，若直接在
+   * `useEffect` 闭包里读会捕获到绑定时的陈旧值；通过 ref 在 render 阶段
+   * 同步最新值，单一 `xterm.onData` 回调即可读到实时状态做正确分派。
+   */
+  const sessionStatusRef = useRef<SessionStatus | undefined>(undefined)
+  const sessionConfigRef = useRef<ConnectionConfig | undefined>(undefined)
+  const sessionErrorMessageRef = useRef<string | undefined>(undefined)
 
   /** 右键菜单状态 */
   const [contextMenu, setContextMenu] = useState<{
@@ -120,6 +169,11 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     })
   )
 
+  // render 阶段同步最新会话状态到 ref，供单一 xterm.onData 回调读取实时状态做分派
+  sessionStatusRef.current = sessionStatus
+  sessionConfigRef.current = sessionConfig
+  sessionErrorMessageRef.current = sessionErrorMessage
+
   const profile = useAppStore((state) =>
     sessionProfileId ? state.profiles.find((p) => p.id === sessionProfileId) : undefined
   )
@@ -139,9 +193,73 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     }
   }, [])
 
+  /**
+   * 触发重连：从第二个 effect 抽出的 R 键重连逻辑。
+   *
+   * 由 bindConnection 的单一 xterm.onData 回调在 disconnected/error 状态下
+   * 拦截到 R/r 时调用。对齐 VSCode `_handleOnData` —— VSCode 在单一 onData 回调内
+   * 通过 processManager 当前状态决定是发到 PTY 还是触发重连。
+   *
+   * 重入守卫：sessionStatusRef 仅在 React render 阶段同步，updateSessionStatus
+   * 触发的 store 更新要等下一次 render 才反映到 ref。若用户快速连按两次 R，
+   * 两次 onData 都会读到旧的 'disconnected'，导致并发 doConnect 链路
+   * （重复 reopen/disconnect/connect + 重复 banner）。reconnectingRef 在入口
+   * 同步置位，doConnect settle 后清零，恢复"首次 R 生效、后续 R 忽略"语义。
+   *
+   * @param sid 会话 ID
+   * @param xterm 当前 xterm 实例（用于读取 cols/rows 同步尺寸）
+   */
+  const triggerReconnect = useCallback((sid: string, xterm: XTerm) => {
+    if (reconnectingRef.current) return
+    reconnectingRef.current = true
+
+    const config = sessionConfigRef.current
+    if (!config) {
+      reconnectingRef.current = false
+      return
+    }
+
+    rendererPluginHost.notifySessionReconnect(sid)
+    updateSessionStatus(sid, 'connecting')
+    const resolvedLogConfig = resolveLogConfig(config.logConfig, useAppStore.getState().settings)
+    const doConnect = async () => {
+      try {
+        // 先尝试在现有连接上重新打开（SSH 可复用底层连接，无需重新认证）
+        try {
+          await window.api.connection.reopen(sid)
+          // reopen 成功后同步终端尺寸到新 shell
+          if (config.type !== 'serial') {
+            window.api.connection.resize(sid, xterm.cols, xterm.rows)
+          }
+          updateSessionStatus(sid, 'connected')
+          return
+        } catch {
+          // reopen 失败（连接类型不支持或客户端已断开），回退到完整重连
+        }
+        try {
+          await window.api.connection.disconnect(sid)
+        } catch {
+          // 旧会话可能已不存在，忽略
+        }
+        try {
+          config.id = sid
+          await window.api.connection.connect(config, resolvedLogConfig)
+          updateSessionStatus(sid, 'connected')
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err)
+          useAppStore.getState().writeSessionError(sid, message)
+        }
+      } finally {
+        // 必须包裹所有路径（reopen 成功 return / connect 成功 / connect 失败），
+        // 否则 reopen 成功后守卫永不重置，后续断开时 R 键被永久静默丢弃。
+        reconnectingRef.current = false
+      }
+    }
+    doConnect()
+  }, [updateSessionStatus])
+
   /** 绑定统一连接数据流到 xterm */
   const bindConnection = useCallback((sid: string, xterm: XTerm) => {
-    // 订阅连接数据，写入 xterm（经 PinnedScroll 维护滚动位置 + FlowControl 背压）
     const unsub = window.api.connection.onData((dataSid, data) => {
       if (dataSid === sid && xtermRef.current) {
         const { sessions } = useAppStore.getState()
@@ -151,21 +269,36 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
         }
       }
     })
-    unsubscribeRef.current = unsub
+    safeSetUnsubscribe(unsubscribeRef, unsub)
 
-    // 监听 xterm 用户输入，发送到连接
+    // 监听 xterm 用户输入：单一 onData 注册点，状态机分派
+    // 对齐 VSCode terminalInstance.ts:875 —— VSCode 单一 xterm.raw.onData 回调内
+    // 通过 processManager 当前状态决定是发到 PTY 还是触发重连。
+    // wilson-term 用 sessionStatusRef 在 render 阶段同步最新状态，
+    // 单一 xterm.onData 回调即可读到实时状态做正确分派：
+    //   - disconnected / error → 拦截 R/r 触发重连
+    //   - 其余状态 → 走 IME 漏出过滤器 → 发到 PTY
     const inputDisposable = xterm.onData((data) => {
       // 用户输入意味着结束回看、准备查看新输出，立即跟随底部，
       // 后续远端回显与命令输出即可自动滚到底部。
       pinnedScrollRef.current?.onUserInput()
-      // 通过 IME 首字母漏出过滤器写入，修复微软拼音等 IME 在 xterm.js 上游
+
+      const currentStatus = sessionStatusRef.current
+      if (currentStatus === 'disconnected' || currentStatus === 'error') {
+        // 断开/错误状态：拦截 R/r 触发重连，不发给 PTY
+        if (data === 'R' || data === 'r') {
+          triggerReconnect(sid, xterm)
+        }
+        return
+      }
+
+      // 正常状态：通过 IME 首字母漏出过滤器写入，修复微软拼音等 IME 在 xterm.js 上游
       // 的 compositionstart 滞后 bug（详见 utils/imeLeakFilter.ts）。
       // 注意：feedInput 也必须走 onFlush，否则被丢弃的 IME 漏出字母仍会到达插件，
       // 导致插件输入流与远端写入流不一致。
       imeLeakFilterRef.current?.feed(data)
     })
-    inputDisposableRef.current = inputDisposable
-
+    safeSetDisposable(inputDisposableRef, inputDisposable)
     // 监听连接状态变化
     const statusUnsub = window.api.connection.onStatus((statusSid, status, errMsg) => {
       if (statusSid === sid) {
@@ -179,7 +312,7 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
         }
       }
     })
-    statusUnsubscribeRef.current = statusUnsub
+    safeSetUnsubscribe(statusUnsubscribeRef, statusUnsub)
 
     // 监听 xterm 尺寸变化，通知 SSH/Telnet 调整 PTY（串口不需要）
     const config = useAppStore.getState().sessions.find((s) => s.id === sid)?.config
@@ -209,10 +342,6 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
     if (statusUnsubscribeRef.current) {
       statusUnsubscribeRef.current()
       statusUnsubscribeRef.current = null
-    }
-    if (reconnectDisposableRef.current) {
-      reconnectDisposableRef.current.dispose()
-      reconnectDisposableRef.current = null
     }
   }, [])
 
@@ -525,16 +654,10 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
   }, [sessionId, statusBarVisible])
 
   // 监听 session 状态变化，在终端中显示连接/成功/错误/断开信息
-  // 断开或错误时注册 R 键重连监听
+  // R 键重连已合并到 bindConnection 的单一 xterm.onData 回调（状态机分派）
   useEffect(() => {
     const xterm = xtermRef.current
     if (!xterm || !sessionStatus || !sessionConfig) return
-
-    // 清除之前的重连监听
-    if (reconnectDisposableRef.current) {
-      reconnectDisposableRef.current.dispose()
-      reconnectDisposableRef.current = null
-    }
 
     if (sessionStatus === 'connecting') {
       if (sessionConfig.type === 'serial') {
@@ -556,56 +679,12 @@ const TerminalInstance: React.FC<TerminalInstanceProps> = ({ sessionId, visible 
       } else if (sessionConfig.type === 'ssh') {
         writeBanner(`\x1b[32m已成功连接到 ${sessionConfig.username}@${sessionConfig.host}:${sessionConfig.port}\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'telnet') {
-        writeBanner(`\x1b[32m已成功连接到 Telnet ${sessionConfig.host}:${sessionConfig.port}\x1b[0m\r\n`)
+        writeBanner(`\x1b[32m已成功连接到 Telnet ${sessionConfig.host}:${sessionConfig.port}...\x1b[0m\r\n`)
       } else if (sessionConfig.type === 'bash') {
         writeBanner(`\x1b[32m本地终端已启动\x1b[0m\r\n`)
       }
     } else if (sessionStatus === 'error' && sessionErrorMessage) {
       writeBanner(`\r\n\x1b[31m连接失败: ${sessionErrorMessage}\x1b[0m\r\n\x1b[33m按 R 键重新连接\x1b[0m\r\n`)
-    }
-
-    // 断开或错误状态时注册 R 键重连监听
-    if (sessionStatus === 'disconnected' || sessionStatus === 'error') {
-      const config = sessionConfig
-      reconnectDisposableRef.current = xterm.onData((data) => {
-        if (data === 'R' || data === 'r') {
-          if (reconnectDisposableRef.current) {
-            reconnectDisposableRef.current.dispose()
-            reconnectDisposableRef.current = null
-          }
-          rendererPluginHost.notifySessionReconnect(sessionId)
-          updateSessionStatus(sessionId, 'connecting')
-          const resolvedLogConfig = resolveLogConfig(config.logConfig, useAppStore.getState().settings)
-          const doConnect = async () => {
-            // 先尝试在现有连接上重新打开（SSH 可复用底层连接，无需重新认证）
-            try {
-              await window.api.connection.reopen(sessionId)
-              // reopen 成功后同步终端尺寸到新 shell
-              if (config.type !== 'serial') {
-                window.api.connection.resize(sessionId, xterm.cols, xterm.rows)
-              }
-              updateSessionStatus(sessionId, 'connected')
-              return
-            } catch {
-              // reopen 失败（连接类型不支持或客户端已断开），回退到完整重连
-            }
-            try {
-              await window.api.connection.disconnect(sessionId)
-            } catch {
-              // 旧会话可能已不存在，忽略
-            }
-            try {
-              config.id = sessionId
-              await window.api.connection.connect(config, resolvedLogConfig)
-              updateSessionStatus(sessionId, 'connected')
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err)
-              useAppStore.getState().writeSessionError(sessionId, message)
-            }
-          }
-          doConnect()
-        }
-      })
     }
   }, [sessionStatus, sessionErrorMessage])
 
